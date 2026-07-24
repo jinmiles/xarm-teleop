@@ -13,6 +13,12 @@ tests/**/out/
 CLAUDE.md
 docs/
 
+# vendored upstream downloaded on demand (reproducible; not committed)
+third_party/
+
+# ad hoc dev tests / smoke scripts (local workspace)
+tests/
+
 # model assets / media (reused in place or downloaded; never commit)
 *.pkl
 *.pt

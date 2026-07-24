@@ -77,3 +77,32 @@ def cmd_live(args) -> int:
         proc_max_side=(args.proc_max_side or None),  # 0 => disable downscaling
     )
     return 0
+
+
+def cmd_sim(args) -> int:
+    """Phase 2: drive the MuJoCo xArm7 from hand teleop (retargeting validation, no hardware)."""
+    from .sim.run import run_sim
+
+    paths.ensure_workspace()
+    source = args.source if args.source is not None else str(
+        paths.EXTERNAL_ROOT / "HaWoR" / "example" / "video_0.mp4")
+    record = args.record
+    if record is None:
+        stem = Path(str(source)).stem if not str(source).isdigit() else f"cam{source}"
+        record = str(paths.OUTPUT_DIR / f"{stem}_sim.mp4")
+
+    run_sim(
+        source=source,
+        record=record,
+        max_frames=args.max_frames,
+        scale=args.scale,
+        depth_scale=args.depth_scale,
+        pos_only=args.pos_only,
+        primary=args.primary,
+        min_cutoff=args.min_cutoff,
+        beta=args.beta,
+        proc_max_side=(args.proc_max_side or None),
+        device=args.device,
+        dtype=args.dtype,
+    )
+    return 0

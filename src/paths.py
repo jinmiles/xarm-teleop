@@ -13,6 +13,7 @@ from pathlib import Path
 # --- project paths -----------------------------------------------------------------------
 REPO_ROOT = Path(__file__).resolve().parent.parent
 THIRD_PARTY = REPO_ROOT / "third_party"      # vendored upstream (submodules), kept clean
+XARM7_SCENE = THIRD_PARTY / "mujoco_menagerie" / "ufactory_xarm7" / "scene.xml"
 DATA_DIR = REPO_ROOT / "data"                # git-ignored local workspace (inputs)
 OUTPUT_DIR = REPO_ROOT / "outputs"           # git-ignored local workspace (outputs)
 TESTS_DIR = REPO_ROOT / "tests"

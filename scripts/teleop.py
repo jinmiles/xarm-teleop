@@ -43,6 +43,21 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--dtype", default="float16", help="model dtype (float16|float32)")
     p.set_defaults(func=commands.cmd_live)
 
+    p = sub.add_parser("sim", help="Phase 2: drive MuJoCo xArm7 from hand teleop")
+    p.add_argument("--source", default=None, help="webcam index or video path (default: sample video)")
+    p.add_argument("--record", default=None, help="side-by-side mp4 path (default: outputs/<name>_sim.mp4)")
+    p.add_argument("--max-frames", type=int, default=None, help="stop after N frames")
+    p.add_argument("--scale", type=float, default=3.0, help="hand->robot position scale")
+    p.add_argument("--depth-scale", type=float, default=0.4, help="scale for the (noisy) camera depth axis")
+    p.add_argument("--pos-only", action="store_true", help="ignore hand orientation (position teleop)")
+    p.add_argument("--primary", default="auto", choices=["auto", "left", "right"], help="controlling hand")
+    p.add_argument("--min-cutoff", type=float, default=1.0, help="One-Euro min cutoff")
+    p.add_argument("--beta", type=float, default=0.02, help="One-Euro speed coefficient")
+    p.add_argument("--proc-max-side", type=int, default=640, help="downscale longest side before inference (0=off)")
+    p.add_argument("--device", default=None, help="cuda|cpu (default: auto)")
+    p.add_argument("--dtype", default="float16", help="model dtype (float16|float32)")
+    p.set_defaults(func=commands.cmd_sim)
+
     return parser
 
 
