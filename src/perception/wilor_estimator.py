@@ -74,7 +74,13 @@ class WiLoREstimator:
         device: Optional[str] = None,
         dtype: str = "float16",
         proc_max_side: Optional[int] = None,
+        primary: str = "auto",
+        det_conf: float = 0.3,
     ) -> None:
+        # Single-hand inference: teleop controls with one hand, so we detect all hands but
+        # reconstruct only the selected one. primary: "auto" (largest bbox) | "left" | "right".
+        self.primary = primary
+        self.det_conf = det_conf
         # proc_max_side: downscale the frame so its longest side <= this before inference.
         # wilor-mini runs a CPU gaussian blur over the *whole frame* per hand when the hand
         # bbox is large (~>563 px), which dominates latency at high resolution. Keeping the
@@ -92,13 +98,17 @@ class WiLoREstimator:
             device = "cuda" if torch.cuda.is_available() else "cpu"
         self.device = torch.device(device)
         self.dtype = getattr(torch, dtype)
-        logger.info("loading WiLoR pipeline (device=%s dtype=%s proc_max_side=%s) ...",
-                    device, dtype, proc_max_side)
+        logger.info("loading WiLoR pipeline (device=%s dtype=%s proc_max_side=%s primary=%s) ...",
+                    device, dtype, proc_max_side, primary)
         self.pipe = WiLorHandPose3dEstimationPipeline(device=self.device, dtype=self.dtype)
         logger.info("WiLoR pipeline ready")
 
     def predict(self, image: np.ndarray, is_bgr: bool = True) -> list[HandObservation]:
-        """Run WiLoR on one frame. ``image`` is HxWx3 uint8 (BGR by default, as from OpenCV)."""
+        """Detect hands, then reconstruct only the single controlling hand.
+
+        Returns a list of length 0 (no hand) or 1 (the selected hand), so downstream code has a
+        uniform interface. ``image`` is HxWx3 uint8 (BGR by default, as from OpenCV).
+        """
         rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB) if is_bgr else image
         h, w = rgb.shape[:2]
         scale = 1.0
@@ -106,9 +116,35 @@ class WiLoREstimator:
         if self.proc_max_side is not None and max(h, w) > self.proc_max_side:
             scale = self.proc_max_side / float(max(h, w))
             proc = cv2.resize(rgb, (round(w * scale), round(h * scale)), interpolation=cv2.INTER_AREA)
-        raw = self.pipe.predict(proc)
-        kp2d_scale = 1.0 / scale  # map 2D detections back to the original image resolution
-        return [self._parse(d, kp2d_scale) for d in raw]
+
+        chosen = self._select(self._detect(proc))
+        if chosen is None:
+            return []
+        bbox, is_right = chosen
+        raw = self.pipe.predict_with_bboxes(proc, np.asarray([bbox], dtype=float), [is_right])
+        if not raw:
+            return []
+        return [self._parse(raw[0], kp2d_scale=1.0 / scale)]
+
+    def _detect(self, proc_rgb: np.ndarray) -> list[tuple[np.ndarray, float]]:
+        """Run only the YOLO hand detector. Returns [(bbox xyxy, is_right), ...]."""
+        res = self.pipe.hand_detector(proc_rgb, conf=self.det_conf, verbose=False)[0]
+        boxes = getattr(res, "boxes", None)
+        if boxes is None or len(boxes) == 0:
+            return []
+        xyxy = boxes.xyxy.cpu().numpy()
+        cls = boxes.cls.cpu().numpy()  # handedness: 0=left, 1=right
+        return [(xyxy[i], float(cls[i])) for i in range(len(xyxy))]
+
+    def _select(self, cands: list[tuple[np.ndarray, float]]) -> Optional[tuple[np.ndarray, float]]:
+        if not cands:
+            return None
+        pool = cands
+        if self.primary == "right":
+            pool = [c for c in cands if round(c[1]) == 1] or cands
+        elif self.primary == "left":
+            pool = [c for c in cands if round(c[1]) == 0] or cands
+        return max(pool, key=lambda c: (c[0][2] - c[0][0]) * (c[0][3] - c[0][1]))  # largest bbox
 
     @staticmethod
     def _parse(det: dict, kp2d_scale: float = 1.0) -> HandObservation:

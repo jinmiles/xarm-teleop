@@ -19,28 +19,25 @@ from ..camera import open_source
 from ..control.filters import OneEuroFilter
 from ..log import get_logger
 from .vis import draw_hands, draw_hud, highlight_hand
-from .wilor_estimator import HandObservation, WiLoREstimator
+from .wilor_estimator import WiLoREstimator
 
 logger = get_logger(__name__)
 
 
-def _bbox_area(bbox: np.ndarray) -> float:
-    x1, y1, x2, y2 = bbox
-    return max(0.0, x2 - x1) * max(0.0, y2 - y1)
-
-
 class HandTracker:
-    """Selects one controlling hand per frame and smooths its wrist position + pinch."""
+    """Smooths the single controlling hand's wrist position + pinch across frames.
+
+    Hand selection happens inside the estimator (single-hand inference), so ``update`` just
+    consumes the 0-or-1 hand it returns.
+    """
 
     def __init__(
         self,
         estimator: WiLoREstimator,
-        primary: str = "auto",           # "auto" | "left" | "right"
         min_cutoff: float = 1.0,
         beta: float = 0.02,
     ) -> None:
         self.est = estimator
-        self.primary = primary
         self.min_cutoff = min_cutoff
         self.beta = beta
         self._pos: Optional[OneEuroFilter] = None
@@ -51,23 +48,13 @@ class HandTracker:
         self._pos = OneEuroFilter(self.min_cutoff, self.beta)
         self._pinch = OneEuroFilter(self.min_cutoff, self.beta)
 
-    def _select(self, hands: list[HandObservation]) -> Optional[HandObservation]:
-        cands = hands
-        if self.primary == "right":
-            cands = [h for h in hands if h.is_right] or hands
-        elif self.primary == "left":
-            cands = [h for h in hands if not h.is_right] or hands
-        if not cands:
-            return None
-        return max(cands, key=lambda h: _bbox_area(h.bbox))
-
     def update(self, color_bgr: np.ndarray, t: float):
-        """Return (all_hands, filtered_primary_or_None). Filter resets when the hand is lost."""
+        """Return (hands, filtered_hand_or_None). Filter resets when the hand is lost."""
         hands = self.est.predict(color_bgr)
-        sel = self._select(hands)
-        if sel is None:
+        if not hands:
             self._reset()
             return hands, None
+        sel = hands[0]
         pos = self._pos(sel.wrist_pos_cam, t)
         pinch = float(self._pinch(np.array([sel.pinch_dist]), t)[0])
         return hands, replace(sel, wrist_pos_cam=pos, pinch_dist=pinch)
@@ -85,8 +72,8 @@ def run_live(
     dtype: str = "float16",
     proc_max_side: Optional[int] = 640,
 ) -> dict:
-    est = WiLoREstimator(device=device, dtype=dtype, proc_max_side=proc_max_side)
-    tracker = HandTracker(est, primary=primary, min_cutoff=min_cutoff, beta=beta)
+    est = WiLoREstimator(device=device, dtype=dtype, proc_max_side=proc_max_side, primary=primary)
+    tracker = HandTracker(est, min_cutoff=min_cutoff, beta=beta)
 
     writer: Optional[cv2.VideoWriter] = None
     recent = deque(maxlen=15)
