@@ -50,3 +50,29 @@ def cmd_wilor_image(args) -> int:
     cv2.imwrite(str(out_path), draw_hands(image, hands))
     logger.info("overlay saved: %s", out_path)
     return 0
+
+
+def cmd_live(args) -> int:
+    """Phase 1: real-time hand tracking over a webcam / video, with One-Euro smoothing."""
+    from .perception.realtime import run_live
+
+    paths.ensure_workspace()
+    source = args.source if args.source is not None else str(paths.EXTERNAL_ROOT / "HaWoR" / "example" / "video_0.mp4")
+    record = args.record
+    if record is None and not args.display:
+        # Headless default: produce a visual artifact so the run is verifiable.
+        stem = Path(str(source)).stem if not str(source).isdigit() else f"cam{source}"
+        record = str(paths.OUTPUT_DIR / f"{stem}_live.mp4")
+
+    run_live(
+        source=source,
+        record=record,
+        display=args.display,
+        max_frames=args.max_frames,
+        min_cutoff=args.min_cutoff,
+        beta=args.beta,
+        primary=args.primary,
+        device=args.device,
+        dtype=args.dtype,
+    )
+    return 0

@@ -53,3 +53,20 @@ def draw_hands(image_bgr: np.ndarray, hands: list[HandObservation]) -> np.ndarra
                     (x1, min(h - 4, y2 + 18)),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
     return out
+
+
+def highlight_hand(image_bgr: np.ndarray, hand: HandObservation) -> None:
+    """Draw a thick yellow box marking the selected controlling hand (in place)."""
+    x1, y1, x2, y2 = hand.bbox.astype(int)
+    cv2.rectangle(image_bgr, (x1, y1), (x2, y2), (0, 255, 255), 3)
+
+
+def draw_hud(image_bgr: np.ndarray, lines: list[str], org: tuple[int, int] = (10, 24)) -> None:
+    """Draw stacked HUD text lines with a dark backdrop (in place)."""
+    x, y0 = org
+    for i, line in enumerate(lines):
+        y = y0 + i * 24
+        (tw, th), _ = cv2.getTextSize(line, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+        cv2.rectangle(image_bgr, (x - 4, y - th - 4), (x + tw + 4, y + 6), (0, 0, 0), -1)
+        cv2.putText(image_bgr, line, (x, y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2, cv2.LINE_AA)

@@ -27,6 +27,20 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--dtype", default="float16", help="model dtype (float16|float32)")
     p.set_defaults(func=commands.cmd_wilor_image)
 
+    p = sub.add_parser("live", help="Phase 1: real-time hand tracking (webcam/video)")
+    p.add_argument("--source", default=None,
+                   help="webcam index (e.g. 0) or video path (default: bundled sample video)")
+    p.add_argument("--record", default=None, help="write annotated mp4 to this path")
+    p.add_argument("--display", action="store_true", help="show a live window (needs a display)")
+    p.add_argument("--max-frames", type=int, default=None, help="stop after N frames")
+    p.add_argument("--primary", default="auto", choices=["auto", "left", "right"],
+                   help="which hand controls (default: auto = largest)")
+    p.add_argument("--min-cutoff", type=float, default=1.0, help="One-Euro min cutoff")
+    p.add_argument("--beta", type=float, default=0.02, help="One-Euro speed coefficient")
+    p.add_argument("--device", default=None, help="cuda|cpu (default: auto)")
+    p.add_argument("--dtype", default="float16", help="model dtype (float16|float32)")
+    p.set_defaults(func=commands.cmd_live)
+
     return parser
 
 
