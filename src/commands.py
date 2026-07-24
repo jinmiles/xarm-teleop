@@ -106,3 +106,37 @@ def cmd_sim(args) -> int:
         dtype=args.dtype,
     )
     return 0
+
+
+def cmd_teleop(args) -> int:
+    """Phase 3: drive the real xArm7 with the shared teleop loop (dry-run unless --execute)."""
+    from .control.safety import SafetyLimiter
+    from .control.xarm_controller import XArm7Controller
+    from .loop import run_teleop
+    from .retarget import Retargeter
+
+    dry_run = not args.execute
+    if not dry_run and not args.ip:
+        logger.error("--execute requires --ip <xArm controller IP>")
+        return 1
+    if not dry_run:
+        logger.warning("EXECUTE mode: commanding a REAL robot. Ensure E-stop is within reach.")
+
+    paths.ensure_workspace()
+    source = args.source if args.source is not None else str(
+        paths.EXTERNAL_ROOT / "HaWoR" / "example" / "video_0.mp4")
+    record = args.record
+    if record is None:
+        stem = Path(str(source)).stem if not str(source).isdigit() else f"cam{source}"
+        record = str(paths.OUTPUT_DIR / f"{stem}_teleop.mp4")
+
+    backend = XArm7Controller(ip=args.ip or "0.0.0.0", dry_run=dry_run, tcp_speed=args.tcp_speed)
+    retarget = Retargeter(scale=args.scale, depth_scale=args.depth_scale, pos_only=args.pos_only)
+    safety = SafetyLimiter(max_step_m=args.max_step_m)
+    run_teleop(
+        backend=backend, source=source, retarget=retarget, safety=safety, record=record,
+        max_frames=args.max_frames, primary=args.primary, min_cutoff=args.min_cutoff,
+        beta=args.beta, proc_max_side=(args.proc_max_side or None),
+        device=args.device, dtype=args.dtype,
+    )
+    return 0

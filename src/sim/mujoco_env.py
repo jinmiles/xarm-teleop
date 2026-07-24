@@ -52,6 +52,13 @@ class XArm7Sim:
         self.cam.azimuth, self.cam.elevation, self.cam.distance = 135.0, -20.0, 1.8
         self.cam.lookat[:] = [0.0, 0.0, 0.4]
 
+    # --- RobotBackend interface ----------------------------------------------------------
+    def connect(self) -> None:
+        pass  # sim needs no connection
+
+    def home(self) -> None:
+        self.reset_home()
+
     # --- state ---------------------------------------------------------------------------
     def reset_home(self) -> None:
         mujoco.mj_resetDataKeyframe(self.model, self.data, 0)  # 'home'
