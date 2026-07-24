@@ -1,0 +1,25 @@
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# git-ignored local workspace (never commit generated data/outputs)
+data/
+outputs/
+tests/**/out/
+
+# local-only project files (not tracked in this repo)
+CLAUDE.md
+docs/
+
+# model assets / media (reused in place or downloaded; never commit)
+*.pkl
+*.pt
+*.pth
+*.ckpt
+*.mp4
+*.bag
+*.npz
+
+.DS_Store
