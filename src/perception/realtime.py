@@ -9,7 +9,6 @@ import statistics
 import time
 from collections import deque
 from dataclasses import replace
-from pathlib import Path
 from typing import Optional
 
 import cv2
@@ -18,6 +17,7 @@ import numpy as np
 from ..camera import open_source
 from ..control.filters import OneEuroFilter
 from ..log import get_logger
+from ..video import VideoWriter
 from .vis import draw_hands, draw_hud, highlight_hand
 from .wilor_estimator import WiLoREstimator
 
@@ -75,7 +75,7 @@ def run_live(
     est = WiLoREstimator(device=device, dtype=dtype, proc_max_side=proc_max_side, primary=primary)
     tracker = HandTracker(est, min_cutoff=min_cutoff, beta=beta)
 
-    writer: Optional[cv2.VideoWriter] = None
+    writer: Optional[VideoWriter] = None
     recent = deque(maxlen=15)
     infer_ms: list[float] = []
     n_lost = 0
@@ -107,11 +107,8 @@ def run_live(
 
             if record:
                 if writer is None:
-                    Path(record).parent.mkdir(parents=True, exist_ok=True)
                     h, w = vis.shape[:2]
-                    writer = cv2.VideoWriter(
-                        record, cv2.VideoWriter_fourcc(*"mp4v"), out_fps, (w, h)
-                    )
+                    writer = VideoWriter(record, out_fps, (w, h))
                 writer.write(vis)
             if display:
                 cv2.imshow("xarm-teleop | perception", vis)
@@ -122,7 +119,7 @@ def run_live(
         wall = time.perf_counter() - wall_start
 
     if writer is not None:
-        writer.release()
+        writer.close()
     if display:
         cv2.destroyAllWindows()
 

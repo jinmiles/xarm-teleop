@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import statistics
 import time
-from pathlib import Path
 from typing import Optional
 
 import cv2
@@ -20,6 +19,7 @@ from ..perception.realtime import HandTracker
 from ..perception.vis import draw_hud, draw_hands, highlight_hand
 from ..perception.wilor_estimator import WiLoREstimator
 from ..retarget import Retargeter, pinch_to_closed
+from ..video import VideoWriter
 from .mujoco_env import XArm7Sim
 
 logger = get_logger(__name__)
@@ -49,7 +49,7 @@ def run_sim(
     retarget = Retargeter(scale=scale, depth_scale=depth_scale, pos_only=pos_only)
     sim = XArm7Sim(render=True, width=640, height=480)
 
-    writer: Optional[cv2.VideoWriter] = None
+    writer: Optional[VideoWriter] = None
     track_err: list[float] = []
     n_frames = n_tracked = 0
 
@@ -88,17 +88,15 @@ def run_sim(
 
             if record:
                 if writer is None:
-                    Path(record).parent.mkdir(parents=True, exist_ok=True)
                     h, w = composed.shape[:2]
-                    writer = cv2.VideoWriter(record, cv2.VideoWriter_fourcc(*"mp4v"),
-                                             out_fps, (w, h))
+                    writer = VideoWriter(record, out_fps, (w, h))
                 writer.write(composed)
             if max_frames is not None and frame.index + 1 >= max_frames:
                 break
         wall = time.perf_counter() - wall
 
     if writer is not None:
-        writer.release()
+        writer.close()
     sim.close()
 
     stats = {
