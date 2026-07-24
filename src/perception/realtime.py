@@ -83,8 +83,9 @@ def run_live(
     primary: str = "auto",
     device: Optional[str] = None,
     dtype: str = "float16",
+    proc_max_side: Optional[int] = 640,
 ) -> dict:
-    est = WiLoREstimator(device=device, dtype=dtype)
+    est = WiLoREstimator(device=device, dtype=dtype, proc_max_side=proc_max_side)
     tracker = HandTracker(est, primary=primary, min_cutoff=min_cutoff, beta=beta)
 
     writer: Optional[cv2.VideoWriter] = None

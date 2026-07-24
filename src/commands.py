@@ -74,5 +74,6 @@ def cmd_live(args) -> int:
         primary=args.primary,
         device=args.device,
         dtype=args.dtype,
+        proc_max_side=(args.proc_max_side or None),  # 0 => disable downscaling
     )
     return 0

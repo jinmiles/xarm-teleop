@@ -37,6 +37,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="which hand controls (default: auto = largest)")
     p.add_argument("--min-cutoff", type=float, default=1.0, help="One-Euro min cutoff")
     p.add_argument("--beta", type=float, default=0.02, help="One-Euro speed coefficient")
+    p.add_argument("--proc-max-side", type=int, default=640,
+                   help="downscale frames so longest side <= this before inference (0=off)")
     p.add_argument("--device", default=None, help="cuda|cpu (default: auto)")
     p.add_argument("--dtype", default="float16", help="model dtype (float16|float32)")
     p.set_defaults(func=commands.cmd_live)

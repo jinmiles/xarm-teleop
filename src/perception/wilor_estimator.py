@@ -69,7 +69,18 @@ class HandObservation:
 class WiLoREstimator:
     """Thin wrapper around wilor-mini's 3D hand pose pipeline."""
 
-    def __init__(self, device: Optional[str] = None, dtype: str = "float16") -> None:
+    def __init__(
+        self,
+        device: Optional[str] = None,
+        dtype: str = "float16",
+        proc_max_side: Optional[int] = None,
+    ) -> None:
+        # proc_max_side: downscale the frame so its longest side <= this before inference.
+        # wilor-mini runs a CPU gaussian blur over the *whole frame* per hand when the hand
+        # bbox is large (~>563 px), which dominates latency at high resolution. Keeping the
+        # processed frame small avoids that trigger (~5x faster at 1080p) with no loss of hand
+        # detail (the model crops to 256 px anyway). None = no downscale.
+        self.proc_max_side = proc_max_side
         paths.configure_hf_cache()
         import torch  # deferred: torch belongs to the model env, not to import-time of paths
         from wilor_mini.pipelines.wilor_hand_pose3d_estimation_pipeline import (
@@ -81,21 +92,30 @@ class WiLoREstimator:
             device = "cuda" if torch.cuda.is_available() else "cpu"
         self.device = torch.device(device)
         self.dtype = getattr(torch, dtype)
-        logger.info("loading WiLoR pipeline (device=%s dtype=%s) ...", device, dtype)
+        logger.info("loading WiLoR pipeline (device=%s dtype=%s proc_max_side=%s) ...",
+                    device, dtype, proc_max_side)
         self.pipe = WiLorHandPose3dEstimationPipeline(device=self.device, dtype=self.dtype)
         logger.info("WiLoR pipeline ready")
 
     def predict(self, image: np.ndarray, is_bgr: bool = True) -> list[HandObservation]:
         """Run WiLoR on one frame. ``image`` is HxWx3 uint8 (BGR by default, as from OpenCV)."""
         rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB) if is_bgr else image
-        raw = self.pipe.predict(rgb)
-        return [self._parse(d) for d in raw]
+        h, w = rgb.shape[:2]
+        scale = 1.0
+        proc = rgb
+        if self.proc_max_side is not None and max(h, w) > self.proc_max_side:
+            scale = self.proc_max_side / float(max(h, w))
+            proc = cv2.resize(rgb, (round(w * scale), round(h * scale)), interpolation=cv2.INTER_AREA)
+        raw = self.pipe.predict(proc)
+        kp2d_scale = 1.0 / scale  # map 2D detections back to the original image resolution
+        return [self._parse(d, kp2d_scale) for d in raw]
 
     @staticmethod
-    def _parse(det: dict) -> HandObservation:
+    def _parse(det: dict, kp2d_scale: float = 1.0) -> HandObservation:
         w = det["wilor_preds"]
         kp3d = np.asarray(w["pred_keypoints_3d"], dtype=float).reshape(-1, 3)  # (21,3)
-        kp2d = np.asarray(w["pred_keypoints_2d"], dtype=float).reshape(-1, 2)  # (21,2)
+        # 2D outputs are in processed-image pixels; rescale to the original frame resolution.
+        kp2d = np.asarray(w["pred_keypoints_2d"], dtype=float).reshape(-1, 2) * kp2d_scale
         cam_t = np.asarray(w["pred_cam_t_full"], dtype=float).reshape(3)
         aa = np.asarray(w["global_orient"], dtype=float).reshape(3)
         rotmat, _ = cv2.Rodrigues(aa)
@@ -103,7 +123,7 @@ class WiLoREstimator:
         pinch = float(np.linalg.norm(kp3d[THUMB_TIP] - kp3d[INDEX_TIP]))
         return HandObservation(
             is_right=bool(round(float(det["is_right"]))),
-            bbox=np.asarray(det["hand_bbox"], dtype=float).reshape(4),
+            bbox=np.asarray(det["hand_bbox"], dtype=float).reshape(4) * kp2d_scale,
             wrist_pos_cam=wrist_pos,
             wrist_rotmat=np.asarray(rotmat, dtype=float),
             wrist_aa=aa,
