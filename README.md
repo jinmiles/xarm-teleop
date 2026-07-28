@@ -161,7 +161,9 @@ python scripts/teleop.py teleop --execute --ip IP ...     # Phase 3: real xArm7 
 ```
 Common flags: `--scale`, `--depth-scale`, `--pos-only`, `--primary auto|left|right`,
 `--min-cutoff`, `--beta`, `--proc-max-side` (downscale before inference), `--device`, `--record`.
-Outputs are H.264 mp4 (playable in VSCode/browser).
+Outputs are H.264 mp4 (playable in VSCode/browser). The H.264 encoder is probed from the local
+ffmpeg build at runtime (`libx264` -> `h264_nvenc` -> `libopenh264`), so LGPL builds without x264
+work too; if none is usable the writer falls back to OpenCV mp4v and logs a warning.
 
 ## 8. Troubleshooting
 
@@ -175,6 +177,10 @@ Outputs are H.264 mp4 (playable in VSCode/browser).
 - **Orientation off** — the controller uses the axis-angle servo (`set_servo_cartesian_aa`);
   verify your firmware's `get_position_aa` convention during bring-up. Use `--pos-only` to ignore
   orientation while you debug position.
+- **`Unrecognized option 'preset'` / recording dies with `BrokenPipeError`** — an ffmpeg build
+  without libx264 (common with conda-forge LGPL packages). Handled automatically now: the encoder
+  is probed at startup and libopenh264 is used instead. To get x264 back:
+  `conda install -c conda-forge 'ffmpeg=*=*gpl*'`.
 - **Slow inference (<20 fps)** — expected on eager PyTorch (~50 ms/frame single hand on a 3090);
   the control loop is decoupled from perception. See `docs/PLAN.md` for the optimization path.
 

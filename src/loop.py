@@ -63,65 +63,70 @@ def run_teleop(
     track_err: list[float] = []
     n_frames = n_tracked = 0
 
-    with open_source(source) as cam:
-        out_fps = cam.fps or 30.0
-        intr = getattr(cam, "intrinsics", None)  # set by depth cameras (D435)
-        if intr is not None:
-            logger.info("depth camera intrinsics present: wrist will be lifted to metric 3D")
-        wall = time.perf_counter()
-        for frame in cam.frames():
-            n_frames += 1
-            hands, prim = tracker.update(frame.color, frame.timestamp,
-                                         depth=frame.depth, intrinsics=intr)
-            cur_pos, cur_rot = backend.tcp_pose()
+    t0 = time.perf_counter()
+    try:
+        with open_source(source) as cam:
+            out_fps = cam.fps or 30.0
+            intr = getattr(cam, "intrinsics", None)  # set by depth cameras (D435)
+            if intr is not None:
+                logger.info("depth camera intrinsics present: wrist will be lifted to metric 3D")
+            t0 = time.perf_counter()  # exclude camera warm-up from throughput
+            for frame in cam.frames():
+                n_frames += 1
+                hands, prim = tracker.update(frame.color, frame.timestamp,
+                                             depth=frame.depth, intrinsics=intr)
+                cur_pos, cur_rot = backend.tcp_pose()
 
-            closed = 0.0
-            if prim is not None:
-                n_tracked += 1
-                if not retarget.engaged:
-                    retarget.engage(prim, cur_pos, cur_rot)
-                tgt_pos, tgt_rot = retarget.target(prim)
-                closed = pinch_to_closed(prim.pinch_dist)
-                safe_pos, safe_rot = safety.limit(tgt_pos, tgt_rot, cur_pos, cur_rot)
-                backend.servo_to(safe_pos, safe_rot, gripper_closed=closed)
-                reached, _ = backend.tcp_pose()
-                track_err.append(float(np.linalg.norm(safe_pos - reached)))
-            else:
-                backend.hold()
+                closed = 0.0
+                if prim is not None:
+                    n_tracked += 1
+                    if not retarget.engaged:
+                        retarget.engage(prim, cur_pos, cur_rot)
+                    tgt_pos, tgt_rot = retarget.target(prim)
+                    closed = pinch_to_closed(prim.pinch_dist)
+                    safe_pos, safe_rot = safety.limit(tgt_pos, tgt_rot, cur_pos, cur_rot)
+                    backend.servo_to(safe_pos, safe_rot, gripper_closed=closed)
+                    reached, _ = backend.tcp_pose()
+                    track_err.append(float(np.linalg.norm(safe_pos - reached)))
+                else:
+                    backend.hold()
 
-            # left: camera overlay
-            cam_vis = draw_hands(frame.color, hands)
-            hud = [f"frame {frame.index}  {'ENGAGED' if retarget.engaged else 'idle'}"
-                   + ("  ESTOP" if safety.estopped else "")]
-            if prim is not None:
-                highlight_hand(cam_vis, prim)
-                hud.append(f"pinch {prim.pinch_dist*1000:.0f}mm -> grip {closed:.2f}")
-            draw_hud(cam_vis, hud)
+                # left: camera overlay
+                cam_vis = draw_hands(frame.color, hands)
+                hud = [f"frame {frame.index}  {'ENGAGED' if retarget.engaged else 'idle'}"
+                       + ("  ESTOP" if safety.estopped else "")]
+                if prim is not None:
+                    highlight_hand(cam_vis, prim)
+                    hud.append(f"pinch {prim.pinch_dist*1000:.0f}mm -> grip {closed:.2f}")
+                draw_hud(cam_vis, hud)
 
-            # right: robot render (sim) or status panel (real)
-            rgb = backend.render()
-            tcp, _ = backend.tcp_pose()
-            status = [f"TCP {tcp[0]:+.2f},{tcp[1]:+.2f},{tcp[2]:+.2f}",
-                      f"gripper {'closed' if closed > 0.5 else 'open'}"]
-            if rgb is not None:
-                right = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
-                draw_hud(right, status)
-            else:
-                right = _status_panel((480, 480), ["[real backend]"] + status)
-            composed = np.hstack([_fit_h(cam_vis, 480), _fit_h(right, 480)])
+                # right: robot render (sim) or status panel (real)
+                rgb = backend.render()
+                tcp, _ = backend.tcp_pose()
+                status = [f"TCP {tcp[0]:+.2f},{tcp[1]:+.2f},{tcp[2]:+.2f}",
+                          f"gripper {'closed' if closed > 0.5 else 'open'}"]
+                if rgb is not None:
+                    right = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+                    draw_hud(right, status)
+                else:
+                    right = _status_panel((480, 480), ["[real backend]"] + status)
+                composed = np.hstack([_fit_h(cam_vis, 480), _fit_h(right, 480)])
 
-            if record:
-                if writer is None:
-                    h, w = composed.shape[:2]
-                    writer = VideoWriter(record, out_fps, (w, h))
-                writer.write(composed)
-            if max_frames is not None and frame.index + 1 >= max_frames:
-                break
-        wall = time.perf_counter() - wall
-
-    if writer is not None:
-        writer.close()
-    backend.close()
+                if record:
+                    if writer is None:
+                        h, w = composed.shape[:2]
+                        writer = VideoWriter(record, out_fps, (w, h))
+                    writer.write(composed)
+                if max_frames is not None and frame.index + 1 >= max_frames:
+                    break
+    except KeyboardInterrupt:
+        logger.info("interrupted after %d frames; finalizing video and backend", n_frames)
+    finally:
+        # always finalize: an unfinished mp4 is unplayable and a live arm must leave servo mode
+        if writer is not None:
+            writer.close()
+        backend.close()
+    wall = time.perf_counter() - t0
 
     stats = {
         "frames": n_frames,
