@@ -32,22 +32,35 @@ interface, so you can validate everything in sim before the arm ever moves.
 
 ## 2. Installation
 
+**One command** (creates a conda env, installs everything in the right order, verifies imports):
+
 ```bash
-conda create -n xarm-teleop python=3.10 -y
+bash scripts/install_env.sh          # env name: xarm-teleop (pass a name to override)
 conda activate xarm-teleop
+```
 
-# 1) PyTorch for CUDA 11.8 (install FIRST so nothing downgrades it to a CPU build)
+This recipe is validated on a clean Python 3.10 machine. If you prefer to run the steps
+yourself, they are:
+
+```bash
+conda create -n xarm-teleop python=3.10 -y && conda activate xarm-teleop
 pip install torch==2.1.0 torchvision==0.16.0 --index-url https://download.pytorch.org/whl/cu118
-
-# 2) project dependencies
+pip install "numpy==1.26.4"
+pip install --no-build-isolation "chumpy @ git+https://github.com/mattloper/chumpy"
 pip install -r requirements.txt
-
-# 3) WiLoR-mini (no-deps: its deps are already in requirements.txt)
 pip install --no-deps "git+https://github.com/warmshao/WiLoR-mini"
 ```
 
+The order and the two odd-looking steps matter on a fresh machine:
+- **torch first** (from the cu118 index) so nothing pulls a CPU build.
+- **`numpy==1.26.4`** — numpy 2.x breaks chumpy/opencv.
+- **chumpy with `--no-build-isolation`** — its ancient `setup.py` imports `pip`, which is
+  absent inside pip's isolated build env, so an ordinary install fails.
+- **WiLoR-mini with `--no-deps`** — otherwise it rebuilds chumpy from a git URL under isolation
+  and fails again; its dependencies are already installed above.
+
 WiLoR + MANO model weights download automatically to the HuggingFace cache on first run
-(~2 GB). No manual weight setup is needed.
+(~2 GB). No manual weight setup is needed. Verify with `python scripts/teleop.py wilor-image`.
 
 For the simulation backend (optional but recommended for validation), the xArm7 MuJoCo model is
 fetched once into `third_party/`:
