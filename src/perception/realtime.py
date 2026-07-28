@@ -11,11 +11,11 @@ from collections import deque
 from dataclasses import replace
 from typing import Optional
 
-import cv2
 import numpy as np
 
 from ..camera import open_source
 from ..control.filters import OneEuroFilter
+from ..display import PreviewWindow
 from ..log import get_logger
 from ..video import VideoWriter
 from .depth_lift import refine_wrist
@@ -83,6 +83,7 @@ def run_live(
     tracker = HandTracker(est, min_cutoff=min_cutoff, beta=beta)
 
     writer: Optional[VideoWriter] = None
+    window = PreviewWindow("xarm-teleop | perception", enabled=display)
     recent = deque(maxlen=15)
     infer_ms: list[float] = []
     n_lost = 0
@@ -117,18 +118,15 @@ def run_live(
                     h, w = vis.shape[:2]
                     writer = VideoWriter(record, out_fps, (w, h))
                 writer.write(vis)
-            if display:
-                cv2.imshow("xarm-teleop | perception", vis)
-                if cv2.waitKey(1) & 0xFF == 27:  # Esc
-                    break
+            if not window.show(vis):
+                break
             if max_frames is not None and frame.index + 1 >= max_frames:
                 break
         wall = time.perf_counter() - wall_start
 
     if writer is not None:
         writer.close()
-    if display:
-        cv2.destroyAllWindows()
+    window.close()
 
     n = len(infer_ms)
     stats = {

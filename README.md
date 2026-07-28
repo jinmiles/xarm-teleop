@@ -104,14 +104,16 @@ realistic depth. Pinch your thumb+index — `pinch` should drop toward ~10 mm.
 
 **Step 2 — Retargeting in simulation (no robot risk).** With metric depth, use `--scale 1`:
 ```bash
-python scripts/teleop.py sim --source realsense --scale 1.0 --depth-scale 1.0
+python scripts/teleop.py sim --source realsense --scale 1.0 --depth-scale 1.0 --display
 ```
 Move your hand — the simulated xArm7 should follow; pinch to close the gripper. Tune
 `--scale`, `--min-cutoff`, `--beta` until motion feels right. Output: `outputs/realsense_sim.mp4`.
+`--display` opens the live side-by-side window (camera overlay | robot) — Esc or `q` stops the run
+cleanly. Drop it when running headless/over SSH; recording is unaffected.
 
 **Step 3 — Real robot, DRY-RUN (no motion).** Validates the exact commands without connecting:
 ```bash
-python scripts/teleop.py teleop --source realsense --scale 1.0 --depth-scale 1.0
+python scripts/teleop.py teleop --source realsense --scale 1.0 --depth-scale 1.0 --display
 ```
 The right panel shows the **commanded** TCP. Confirm it stays inside your workspace box and moves
 sensibly with your hand.
@@ -160,7 +162,8 @@ python scripts/teleop.py teleop --source realsense|0|VID  # Phase 3: real xArm7 
 python scripts/teleop.py teleop --execute --ip IP ...     # Phase 3: real xArm7 (moves!)
 ```
 Common flags: `--scale`, `--depth-scale`, `--pos-only`, `--primary auto|left|right`,
-`--min-cutoff`, `--beta`, `--proc-max-side` (downscale before inference), `--device`, `--record`.
+`--min-cutoff`, `--beta`, `--proc-max-side` (downscale before inference), `--device`, `--record`,
+`--display` (live window on `live`/`sim`/`teleop`; Esc or `q` ends the run cleanly).
 Outputs are H.264 mp4 (playable in VSCode/browser). The H.264 encoder is probed from the local
 ffmpeg build at runtime (`libx264` -> `h264_nvenc` -> `libopenh264`), so LGPL builds without x264
 work too; if none is usable the writer falls back to OpenCV mp4v and logs a warning.
@@ -181,6 +184,9 @@ work too; if none is usable the writer falls back to OpenCV mp4v and logs a warn
   without libx264 (common with conda-forge LGPL packages). Handled automatically now: the encoder
   is probed at startup and libopenh264 is used instead. To get x264 back:
   `conda install -c conda-forge 'ffmpeg=*=*gpl*'`.
+- **`--display` shows nothing** — over SSH you need `ssh -X`/`-Y` (or run on the robot PC's own
+  session). Without a usable display the window disables itself with a warning and the run keeps
+  going; the mp4 is still written. The MuJoCo offscreen render is separate and unaffected.
 - **Slow inference (<20 fps)** — expected on eager PyTorch (~50 ms/frame single hand on a 3090);
   the control loop is decoupled from perception. See `docs/PLAN.md` for the optimization path.
 

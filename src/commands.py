@@ -114,6 +114,7 @@ def cmd_sim(args) -> int:
     run_sim(
         source=source,
         record=record,
+        display=args.display,
         max_frames=args.max_frames,
         scale=args.scale,
         depth_scale=args.depth_scale,
@@ -156,7 +157,8 @@ def cmd_teleop(args) -> int:
     safety = SafetyLimiter(max_step_m=args.max_step_m)
     run_teleop(
         backend=backend, source=source, retarget=retarget, safety=safety, record=record,
-        max_frames=args.max_frames, primary=args.primary, min_cutoff=args.min_cutoff,
+        display=args.display, max_frames=args.max_frames, primary=args.primary,
+        min_cutoff=args.min_cutoff,
         beta=args.beta, proc_max_side=(args.proc_max_side or None),
         device=args.device, dtype=args.dtype,
     )

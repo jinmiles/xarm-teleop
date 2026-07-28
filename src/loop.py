@@ -16,6 +16,7 @@ import numpy as np
 from .camera import open_source
 from .control.backend import RobotBackend
 from .control.safety import SafetyLimiter
+from .display import PreviewWindow
 from .log import get_logger
 from .perception.realtime import HandTracker
 from .perception.vis import draw_hud, draw_hands, highlight_hand
@@ -43,6 +44,7 @@ def run_teleop(
     retarget: Optional[Retargeter] = None,
     safety: Optional[SafetyLimiter] = None,
     record: Optional[str] = None,
+    display: bool = False,
     max_frames: Optional[int] = None,
     primary: str = "auto",
     min_cutoff: float = 1.0,
@@ -60,6 +62,7 @@ def run_teleop(
     backend.home()
 
     writer: Optional[VideoWriter] = None
+    window = PreviewWindow(f"xarm-teleop | {type(backend).__name__}", enabled=display)
     track_err: list[float] = []
     n_frames = n_tracked = 0
 
@@ -117,12 +120,15 @@ def run_teleop(
                         h, w = composed.shape[:2]
                         writer = VideoWriter(record, out_fps, (w, h))
                     writer.write(composed)
+                if not window.show(composed):
+                    break
                 if max_frames is not None and frame.index + 1 >= max_frames:
                     break
     except KeyboardInterrupt:
         logger.info("interrupted after %d frames; finalizing video and backend", n_frames)
     finally:
         # always finalize: an unfinished mp4 is unplayable and a live arm must leave servo mode
+        window.close()
         if writer is not None:
             writer.close()
         backend.close()

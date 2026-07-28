@@ -12,6 +12,7 @@ from .mujoco_env import XArm7Sim
 def run_sim(
     source: str | int,
     record: Optional[str] = None,
+    display: bool = False,
     max_frames: Optional[int] = None,
     scale: float = 3.0,
     depth_scale: float = 0.4,
@@ -31,6 +32,7 @@ def run_sim(
         retarget=retarget,
         safety=SafetyLimiter(),
         record=record,
+        display=display,
         max_frames=max_frames,
         primary=primary,
         min_cutoff=min_cutoff,

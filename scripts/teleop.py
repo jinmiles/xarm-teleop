@@ -47,6 +47,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--source", default=None,
                    help="'realsense' (D435), a webcam index (0), or a video path (default: sample)")
     p.add_argument("--record", default=None, help="side-by-side mp4 path (default: outputs/<name>_sim.mp4)")
+    p.add_argument("--display", action="store_true",
+                   help="show the live side-by-side window (needs a display; Esc/q to stop)")
     p.add_argument("--max-frames", type=int, default=None, help="stop after N frames")
     p.add_argument("--scale", type=float, default=3.0, help="hand->robot position scale")
     p.add_argument("--depth-scale", type=float, default=0.4, help="scale for the (noisy) camera depth axis")
@@ -68,6 +70,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--source", default=None,
                    help="'realsense' (D435), a webcam index (0), or a video path (default: sample)")
     p.add_argument("--record", default=None, help="side-by-side mp4 path")
+    p.add_argument("--display", action="store_true",
+                   help="show the live side-by-side window (needs a display; Esc/q to stop)")
     p.add_argument("--max-frames", type=int, default=None, help="stop after N frames")
     p.add_argument("--scale", type=float, default=3.0, help="hand->robot position scale")
     p.add_argument("--depth-scale", type=float, default=0.4, help="scale for the (noisy) camera depth axis")
