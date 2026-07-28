@@ -14,6 +14,18 @@ import numpy as np
 
 
 @dataclass
+class CameraIntrinsics:
+    """Pinhole intrinsics of the color stream (used to back-project depth to metric 3D)."""
+
+    fx: float
+    fy: float
+    cx: float
+    cy: float
+    width: int
+    height: int
+
+
+@dataclass
 class Frame:
     color: np.ndarray                 # HxWx3 uint8, BGR (OpenCV convention)
     index: int                        # 0-based frame counter
@@ -23,6 +35,9 @@ class Frame:
 
 class CameraSource(ABC):
     """A stream of frames. Use as a context manager; iterate with :meth:`frames`."""
+
+    # Set by depth cameras (RealSense); None for webcam/video sources.
+    intrinsics: Optional[CameraIntrinsics] = None
 
     @abstractmethod
     def open(self) -> None: ...

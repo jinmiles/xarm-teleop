@@ -29,7 +29,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("live", help="Phase 1: real-time hand tracking (webcam/video)")
     p.add_argument("--source", default=None,
-                   help="webcam index (e.g. 0) or video path (default: bundled sample video)")
+                   help="'realsense' (D435), a webcam index (0), or a video path (default: sample)")
     p.add_argument("--record", default=None, help="write annotated mp4 to this path")
     p.add_argument("--display", action="store_true", help="show a live window (needs a display)")
     p.add_argument("--max-frames", type=int, default=None, help="stop after N frames")
@@ -44,7 +44,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=commands.cmd_live)
 
     p = sub.add_parser("sim", help="Phase 2: drive MuJoCo xArm7 from hand teleop")
-    p.add_argument("--source", default=None, help="webcam index or video path (default: sample video)")
+    p.add_argument("--source", default=None,
+                   help="'realsense' (D435), a webcam index (0), or a video path (default: sample)")
     p.add_argument("--record", default=None, help="side-by-side mp4 path (default: outputs/<name>_sim.mp4)")
     p.add_argument("--max-frames", type=int, default=None, help="stop after N frames")
     p.add_argument("--scale", type=float, default=3.0, help="hand->robot position scale")
@@ -64,7 +65,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="actually command the robot (default: dry-run, no connection)")
     p.add_argument("--tcp-speed", type=float, default=100.0, help="servo TCP speed cap (mm/s)")
     p.add_argument("--max-step-m", type=float, default=0.02, help="max TCP move per tick (m)")
-    p.add_argument("--source", default=None, help="webcam index or video path (default: sample video)")
+    p.add_argument("--source", default=None,
+                   help="'realsense' (D435), a webcam index (0), or a video path (default: sample)")
     p.add_argument("--record", default=None, help="side-by-side mp4 path")
     p.add_argument("--max-frames", type=int, default=None, help="stop after N frames")
     p.add_argument("--scale", type=float, default=3.0, help="hand->robot position scale")

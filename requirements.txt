@@ -1,0 +1,22 @@
+# Install torch/torchvision for CUDA 11.8 FIRST (see README), then: pip install -r requirements.txt
+# WiLoR-mini is installed separately with --no-deps (its deps are listed here) so it cannot
+# override the CUDA build of torch. Model weights (WiLoR + MANO) auto-download on first run.
+
+# --- perception (WiLoR-mini runtime deps) ---
+timm
+ultralytics
+huggingface_hub
+smplx
+roma
+einops
+yacs
+scikit-image
+opencv-python
+numpy
+scipy
+
+# --- camera / robot / sim ---
+pyrealsense2            # Intel RealSense D435
+xArm-Python-SDK         # UFACTORY xArm7
+mujoco                  # simulation backend (Phase 2 validation)
+PyOpenGL==3.1.7         # EGL offscreen rendering for MuJoCo (needs 3.1.7 for EGLDeviceEXT)

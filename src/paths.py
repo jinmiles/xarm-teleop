@@ -26,6 +26,7 @@ WILOR_DETECTOR_PT = EXTERNAL_ROOT / "HaWoR" / "weights" / "external" / "detector
 SAMPLE_IMAGES_DIR = (
     EXTERNAL_ROOT / "MV-SAM3D" / "submodules" / "Dyn-HaMR" / "third-party" / "hamer" / "example_data"
 )
+SAMPLE_VIDEO = EXTERNAL_ROOT / "HaWoR" / "example" / "video_0.mp4"  # dev-only default source
 
 # Shared HuggingFace cache so wilor-mini weight downloads are centralized and reusable.
 HF_HOME = EXTERNAL_ROOT / "hf_cache"

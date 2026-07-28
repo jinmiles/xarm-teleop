@@ -18,6 +18,7 @@ from ..camera import open_source
 from ..control.filters import OneEuroFilter
 from ..log import get_logger
 from ..video import VideoWriter
+from .depth_lift import refine_wrist
 from .vis import draw_hands, draw_hud, highlight_hand
 from .wilor_estimator import WiLoREstimator
 
@@ -48,13 +49,19 @@ class HandTracker:
         self._pos = OneEuroFilter(self.min_cutoff, self.beta)
         self._pinch = OneEuroFilter(self.min_cutoff, self.beta)
 
-    def update(self, color_bgr: np.ndarray, t: float):
-        """Return (hands, filtered_hand_or_None). Filter resets when the hand is lost."""
+    def update(self, color_bgr: np.ndarray, t: float, depth=None, intrinsics=None):
+        """Return (hands, filtered_hand_or_None). Filter resets when the hand is lost.
+
+        When ``depth`` + ``intrinsics`` are given (D435), the wrist is lifted to metric 3D
+        before filtering, so relative teleop deltas are metrically correct.
+        """
         hands = self.est.predict(color_bgr)
         if not hands:
             self._reset()
             return hands, None
         sel = hands[0]
+        if depth is not None and intrinsics is not None:
+            sel = refine_wrist(sel, depth, intrinsics)
         pos = self._pos(sel.wrist_pos_cam, t)
         pinch = float(self._pinch(np.array([sel.pinch_dist]), t)[0])
         return hands, replace(sel, wrist_pos_cam=pos, pinch_dist=pinch)

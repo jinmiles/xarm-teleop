@@ -12,6 +12,23 @@ from .log import get_logger
 logger = get_logger(__name__)
 
 
+def _resolve_source(arg_source):
+    """Return the user --source, or the bundled dev sample if present, else None (caller errors).
+
+    Portable: on machines without the bundled sample, a --source is required (e.g. 'realsense'
+    for a D435, or '0' for a webcam).
+    """
+    if arg_source is not None:
+        return str(arg_source)
+    if paths.SAMPLE_VIDEO.exists():
+        return str(paths.SAMPLE_VIDEO)
+    return None
+
+
+def _source_stem(source: str) -> str:
+    return f"cam{source}" if str(source).isdigit() else Path(str(source)).stem
+
+
 def cmd_wilor_image(args) -> int:
     """Phase 0 validation: run WiLoR on a still image and save an annotated overlay."""
     from .perception import WiLoREstimator
@@ -57,12 +74,14 @@ def cmd_live(args) -> int:
     from .perception.realtime import run_live
 
     paths.ensure_workspace()
-    source = args.source if args.source is not None else str(paths.EXTERNAL_ROOT / "HaWoR" / "example" / "video_0.mp4")
+    source = _resolve_source(args.source)
+    if source is None:
+        logger.error("no --source given and no bundled sample found; pass --source realsense|0|<video>")
+        return 1
     record = args.record
     if record is None and not args.display:
         # Headless default: produce a visual artifact so the run is verifiable.
-        stem = Path(str(source)).stem if not str(source).isdigit() else f"cam{source}"
-        record = str(paths.OUTPUT_DIR / f"{stem}_live.mp4")
+        record = str(paths.OUTPUT_DIR / f"{_source_stem(source)}_live.mp4")
 
     run_live(
         source=source,
@@ -84,12 +103,13 @@ def cmd_sim(args) -> int:
     from .sim.run import run_sim
 
     paths.ensure_workspace()
-    source = args.source if args.source is not None else str(
-        paths.EXTERNAL_ROOT / "HaWoR" / "example" / "video_0.mp4")
+    source = _resolve_source(args.source)
+    if source is None:
+        logger.error("no --source given and no bundled sample found; pass --source realsense|0|<video>")
+        return 1
     record = args.record
     if record is None:
-        stem = Path(str(source)).stem if not str(source).isdigit() else f"cam{source}"
-        record = str(paths.OUTPUT_DIR / f"{stem}_sim.mp4")
+        record = str(paths.OUTPUT_DIR / f"{_source_stem(source)}_sim.mp4")
 
     run_sim(
         source=source,
@@ -123,12 +143,13 @@ def cmd_teleop(args) -> int:
         logger.warning("EXECUTE mode: commanding a REAL robot. Ensure E-stop is within reach.")
 
     paths.ensure_workspace()
-    source = args.source if args.source is not None else str(
-        paths.EXTERNAL_ROOT / "HaWoR" / "example" / "video_0.mp4")
+    source = _resolve_source(args.source)
+    if source is None:
+        logger.error("no --source given and no bundled sample found; pass --source realsense|0|<video>")
+        return 1
     record = args.record
     if record is None:
-        stem = Path(str(source)).stem if not str(source).isdigit() else f"cam{source}"
-        record = str(paths.OUTPUT_DIR / f"{stem}_teleop.mp4")
+        record = str(paths.OUTPUT_DIR / f"{_source_stem(source)}_teleop.mp4")
 
     backend = XArm7Controller(ip=args.ip or "0.0.0.0", dry_run=dry_run, tcp_speed=args.tcp_speed)
     retarget = Retargeter(scale=args.scale, depth_scale=args.depth_scale, pos_only=args.pos_only)

@@ -65,10 +65,14 @@ def run_teleop(
 
     with open_source(source) as cam:
         out_fps = cam.fps or 30.0
+        intr = getattr(cam, "intrinsics", None)  # set by depth cameras (D435)
+        if intr is not None:
+            logger.info("depth camera intrinsics present: wrist will be lifted to metric 3D")
         wall = time.perf_counter()
         for frame in cam.frames():
             n_frames += 1
-            hands, prim = tracker.update(frame.color, frame.timestamp)
+            hands, prim = tracker.update(frame.color, frame.timestamp,
+                                         depth=frame.depth, intrinsics=intr)
             cur_pos, cur_rot = backend.tcp_pose()
 
             closed = 0.0
