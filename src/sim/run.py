@@ -3,15 +3,18 @@ from __future__ import annotations
 
 from typing import Optional
 
+from ..control.end_effector import EndEffector
 from ..control.safety import SafetyLimiter
 from ..loop import run_teleop
-from ..retarget import Retargeter
+from ..retarget import DexHandRetargeter, Retargeter
 from .mujoco_env import XArm7Sim
 
 
 def run_sim(
     source: str | int,
     record: Optional[str] = None,
+    dex_hand: Optional[EndEffector] = None,
+    dex_retarget: Optional[DexHandRetargeter] = None,
     display: bool = False,
     max_frames: Optional[int] = None,
     scale: float = 3.0,
@@ -31,6 +34,8 @@ def run_sim(
         source=source,
         retarget=retarget,
         safety=SafetyLimiter(),
+        dex_hand=dex_hand,
+        dex_retarget=dex_retarget,
         record=record,
         display=display,
         max_frames=max_frames,

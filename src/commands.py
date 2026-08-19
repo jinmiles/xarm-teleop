@@ -111,9 +111,12 @@ def cmd_sim(args) -> int:
     if record is None:
         record = str(paths.OUTPUT_DIR / f"{_source_stem(source)}_sim.mp4")
 
+    dex_hand, dex_retarget = _build_dex_hand(args)
     run_sim(
         source=source,
         record=record,
+        dex_hand=dex_hand,
+        dex_retarget=dex_retarget,
         display=args.display,
         max_frames=args.max_frames,
         scale=args.scale,
@@ -155,11 +158,132 @@ def cmd_teleop(args) -> int:
     backend = XArm7Controller(ip=args.ip or "0.0.0.0", dry_run=dry_run, tcp_speed=args.tcp_speed)
     retarget = Retargeter(scale=args.scale, depth_scale=args.depth_scale, pos_only=args.pos_only)
     safety = SafetyLimiter(max_step_m=args.max_step_m)
+    dex_hand, dex_retarget = _build_dex_hand(args)
     run_teleop(
-        backend=backend, source=source, retarget=retarget, safety=safety, record=record,
+        backend=backend, source=source, retarget=retarget, safety=safety,
+        dex_hand=dex_hand, dex_retarget=dex_retarget, record=record,
         display=args.display, max_frames=args.max_frames, primary=args.primary,
         min_cutoff=args.min_cutoff,
         beta=args.beta, proc_max_side=(args.proc_max_side or None),
         device=args.device, dtype=args.dtype,
     )
+    return 0
+
+
+def _build_dex_hand(args):
+    """Build the Inspire hand driver + finger retargeter, or (None, None) if not requested."""
+    from .control.inspire_hand import InspireHand
+    from .retarget import DexCalibration, DexHandRetargeter
+
+    port = getattr(args, "hand_port", None)
+    if not port and not getattr(args, "hand_dry_run", False):
+        return None, None
+    calib_path = Path(args.hand_calib) if args.hand_calib else paths.HAND_CALIB
+    if calib_path.exists():
+        calib = DexCalibration.load(calib_path)
+        logger.info("dex hand calibration: %s", calib_path)
+    else:
+        calib = None
+        logger.warning("no hand calibration at %s; using rough defaults "
+                       "(run 'teleop.py hand-calib' for your hand)", calib_path)
+    hand = InspireHand(port=port or "/dev/ttyUSB0", baud=args.hand_baud, hand_id=args.hand_id,
+                       speed=args.hand_speed, force=args.hand_force,
+                       dry_run=getattr(args, "hand_dry_run", False))
+    if not hand.dry_run:
+        logger.warning("dex hand LIVE on %s: fingers will move with your hand", hand.port)
+    return hand, DexHandRetargeter(calib=calib)
+
+
+def cmd_hand_test(args) -> int:
+    """Bring-up check for the Inspire hand: read state, then sweep each DOF open->closed->open."""
+    import time as _time
+
+    from .control.inspire_hand import DOF_NAMES, InspireHand
+
+    hand = InspireHand(port=args.port, baud=args.baud, hand_id=args.id, speed=args.speed,
+                       force=args.force, dry_run=args.dry_run)
+    try:
+        hand.connect()
+        for name, values in (("angle", hand.read_angles()), ("force", hand.read_forces()),
+                             ("error", hand.read_errors()), ("status", hand.read_status()),
+                             ("temp(C)", hand.read_temperature())):
+            if values is not None:
+                logger.info("%-8s %s", name, ", ".join(f"{n}={v}" for n, v in zip(DOF_NAMES, values)))
+        logger.info("opening hand ...")
+        hand.open_hand()
+        _time.sleep(args.hold)
+        for i, name in enumerate(DOF_NAMES):
+            logger.info("[%d/%d] bending %s (others stay open)", i + 1, len(DOF_NAMES), name)
+            angles = [1000] * len(DOF_NAMES)
+            angles[i] = 0
+            hand.set_angles(angles)
+            _time.sleep(args.hold)
+            back = hand.read_angles()
+            if back is not None:
+                logger.info("      readback %s", ", ".join(f"{n}={v}" for n, v in zip(DOF_NAMES, back)))
+            hand.open_hand()
+            _time.sleep(args.hold)
+        logger.info("sweep done. Confirm each named DOF moved the finger it claims, and that "
+                    "0 = bent / 1000 = open on your hand.")
+    finally:
+        hand.close()
+    return 0
+
+
+def cmd_hand_calib(args) -> int:
+    """Record this operator's open-hand and fist finger angles into a calibration JSON."""
+    import time as _time
+
+    import numpy as np
+
+    from .camera import open_source
+    from .perception.realtime import HandTracker
+    from .perception.wilor_estimator import WiLoREstimator
+    from .retarget import DexCalibration, DexHandRetargeter
+    from .retarget.dex_hand import DOF_NAMES
+
+    paths.ensure_workspace()
+    source = _resolve_source(args.source)
+    if source is None:
+        logger.error("no --source given and no bundled sample found; pass --source realsense|0|<video>")
+        return 1
+    out_path = Path(args.out) if args.out else paths.HAND_CALIB
+
+    est = WiLoREstimator(device=args.device, dtype=args.dtype, proc_max_side=args.proc_max_side or None,
+                         primary=args.primary)
+    tracker = HandTracker(est)
+    retarget = DexHandRetargeter()
+    poses = {"open": "hold your hand FULLY OPEN, fingers straight, thumb out",
+             "closed": "make a TIGHT FIST with the thumb across the palm"}
+    captured: dict[str, np.ndarray] = {}
+
+    with open_source(source) as cam:
+        frames = cam.frames()
+        for key, prompt in poses.items():
+            logger.info("=== %s pose: %s ===", key.upper(), prompt)
+            for sec in range(args.countdown, 0, -1):
+                logger.info("  capturing in %d ...", sec)
+                t_end = _time.perf_counter() + 1.0
+                while _time.perf_counter() < t_end:
+                    next(frames, None)
+            samples = []
+            while len(samples) < args.frames:
+                frame = next(frames, None)
+                if frame is None:
+                    logger.error("camera ran out of frames during calibration")
+                    return 1
+                _, prim = tracker.update(frame.color, frame.timestamp)
+                if prim is not None:
+                    samples.append(retarget.raw(prim))
+            captured[key] = np.median(np.stack(samples), axis=0)
+            logger.info("  %s: %s", key,
+                        ", ".join(f"{n}={v:+.2f}" for n, v in zip(DOF_NAMES, captured[key])))
+
+    calib = DexCalibration(captured["open"], captured["closed"])
+    span = calib.closed_rad - calib.open_rad
+    for name, s in zip(DOF_NAMES, span):
+        if abs(s) < 0.15:
+            logger.warning("DOF %s has a tiny open/closed span (%.2f rad) - recapture it", name, s)
+    calib.save(out_path)
+    logger.info("calibration saved: %s", out_path)
     return 0

@@ -1,8 +1,10 @@
 """Backend-agnostic teleop loop: camera -> WiLoR -> retarget -> safety -> robot backend.
 
 Drives either the MuJoCo sim (Phase 2) or the real xArm7 (Phase 3) through the RobotBackend
-interface, so the same retargeting, safety limiting, and clutch logic run in both. Renders a
-side-by-side view (camera overlay | robot render or status panel) to an H.264 mp4.
+interface, so the same retargeting, safety limiting, and clutch logic run in both. An optional
+dexterous hand (Inspire RH56) hangs off its own serial link and is driven per-finger from the same
+hand pose. Renders a side-by-side view (camera overlay | robot render or status panel) to an
+H.264 mp4.
 """
 from __future__ import annotations
 
@@ -15,13 +17,15 @@ import numpy as np
 
 from .camera import open_source
 from .control.backend import RobotBackend
+from .control.end_effector import EndEffector
 from .control.safety import SafetyLimiter
 from .display import PreviewWindow
 from .log import get_logger
 from .perception.realtime import HandTracker
-from .perception.vis import draw_hud, draw_hands, highlight_hand
+from .perception.vis import draw_dof_bars, draw_hud, draw_hands, highlight_hand
 from .perception.wilor_estimator import WiLoREstimator
-from .retarget import Retargeter, pinch_to_closed
+from .retarget import DexHandRetargeter, Retargeter, pinch_to_closed
+from .retarget.dex_hand import DOF_NAMES as DEX_DOF_NAMES
 from .video import VideoWriter
 
 logger = get_logger(__name__)
@@ -43,6 +47,8 @@ def run_teleop(
     source: str | int,
     retarget: Optional[Retargeter] = None,
     safety: Optional[SafetyLimiter] = None,
+    dex_hand: Optional[EndEffector] = None,
+    dex_retarget: Optional[DexHandRetargeter] = None,
     record: Optional[str] = None,
     display: bool = False,
     max_frames: Optional[int] = None,
@@ -60,14 +66,19 @@ def run_teleop(
 
     backend.connect()
     backend.home()
+    if dex_hand is not None:
+        dex_retarget = dex_retarget or DexHandRetargeter()
 
     writer: Optional[VideoWriter] = None
+    dex_targets: Optional[np.ndarray] = None
     window = PreviewWindow(f"xarm-teleop | {type(backend).__name__}", enabled=display)
     track_err: list[float] = []
     n_frames = n_tracked = 0
 
     t0 = time.perf_counter()
     try:
+        if dex_hand is not None:
+            dex_hand.connect()  # inside the try: a serial failure must still close the arm
         with open_source(source) as cam:
             out_fps = cam.fps or 30.0
             intr = getattr(cam, "intrinsics", None)  # set by depth cameras (D435)
@@ -89,6 +100,11 @@ def run_teleop(
                     closed = pinch_to_closed(prim.pinch_dist)
                     safe_pos, safe_rot = safety.limit(tgt_pos, tgt_rot, cur_pos, cur_rot)
                     backend.servo_to(safe_pos, safe_rot, gripper_closed=closed)
+                    if dex_hand is not None:
+                        # finger targets come straight from the hand pose, bypassing the
+                        # single-scalar pinch mapping used by the 2-finger gripper
+                        dex_targets = dex_retarget.targets(prim, frame.timestamp)
+                        dex_hand.apply(dex_targets)
                     reached, _ = backend.tcp_pose()
                     track_err.append(float(np.linalg.norm(safe_pos - reached)))
                 else:
@@ -102,6 +118,9 @@ def run_teleop(
                     highlight_hand(cam_vis, prim)
                     hud.append(f"pinch {prim.pinch_dist*1000:.0f}mm -> grip {closed:.2f}")
                 draw_hud(cam_vis, hud)
+                if dex_targets is not None:
+                    draw_dof_bars(cam_vis, dex_targets, DEX_DOF_NAMES,
+                                  org=(10, cam_vis.shape[0] - 20 * len(DEX_DOF_NAMES) - 10))
 
                 # right: robot render (sim) or status panel (real)
                 rgb = backend.render()
@@ -131,6 +150,8 @@ def run_teleop(
         window.close()
         if writer is not None:
             writer.close()
+        if dex_hand is not None:
+            dex_hand.close()
         backend.close()
     wall = time.perf_counter() - t0
 

@@ -23,5 +23,6 @@ yacs==0.1.8
 # --- camera / robot / sim ---
 pyrealsense2             # Intel RealSense D435
 xArm-Python-SDK==1.18.4  # UFACTORY xArm7
+pyserial==3.5            # Inspire RH56 dexterous hand (RS485)
 mujoco==3.10.0           # simulation backend (Phase 2 validation)
 PyOpenGL==3.1.7          # EGL offscreen rendering for MuJoCo (needs 3.1.7 for EGLDeviceEXT)

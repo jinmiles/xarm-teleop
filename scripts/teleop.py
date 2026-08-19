@@ -16,6 +16,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src import commands  # noqa: E402
 
 
+def _add_hand_flags(p: argparse.ArgumentParser) -> None:
+    """Flags for an Inspire RH56 dexterous hand on its own serial link (opt-in)."""
+    p.add_argument("--hand-port", default=None,
+                   help="serial port of the Inspire RH56 hand, e.g. /dev/ttyUSB0 (enables it)")
+    p.add_argument("--hand-baud", type=int, default=115200, help="hand serial baud (default 115200)")
+    p.add_argument("--hand-id", type=int, default=1, help="hand RS485 id (default 1)")
+    p.add_argument("--hand-speed", type=int, default=500, help="hand SPEED_SET, 0-1000")
+    p.add_argument("--hand-force", type=int, default=300, help="hand FORCE_SET grip threshold, 0-1000 g")
+    p.add_argument("--hand-calib", default=None,
+                   help="finger calibration JSON (default: data/hand_calib.json if present)")
+    p.add_argument("--hand-dry-run", action="store_true",
+                   help="build hand frames without opening the port (no finger motion)")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="teleop", description="xArm7 hand teleoperation")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -59,6 +73,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--proc-max-side", type=int, default=640, help="downscale longest side before inference (0=off)")
     p.add_argument("--device", default=None, help="cuda|cpu (default: auto)")
     p.add_argument("--dtype", default="float16", help="model dtype (float16|float32)")
+    _add_hand_flags(p)
     p.set_defaults(func=commands.cmd_sim)
 
     p = sub.add_parser("teleop", help="Phase 3: drive the real xArm7 (dry-run unless --execute)")
@@ -82,7 +97,30 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--proc-max-side", type=int, default=640, help="downscale longest side before inference (0=off)")
     p.add_argument("--device", default=None, help="cuda|cpu (default: auto)")
     p.add_argument("--dtype", default="float16", help="model dtype (float16|float32)")
+    _add_hand_flags(p)
     p.set_defaults(func=commands.cmd_teleop)
+
+    p = sub.add_parser("hand-test", help="Bring-up: sweep each DOF of the Inspire RH56 hand")
+    p.add_argument("--port", default="/dev/ttyUSB0", help="serial port (default /dev/ttyUSB0)")
+    p.add_argument("--baud", type=int, default=115200, help="serial baud (default 115200)")
+    p.add_argument("--id", type=int, default=1, help="hand RS485 id (default 1)")
+    p.add_argument("--speed", type=int, default=300, help="SPEED_SET for the sweep, 0-1000")
+    p.add_argument("--force", type=int, default=300, help="FORCE_SET during the sweep, 0-1000 g")
+    p.add_argument("--hold", type=float, default=1.0, help="seconds to hold each sweep step")
+    p.add_argument("--dry-run", action="store_true", help="log frames without opening the port")
+    p.set_defaults(func=commands.cmd_hand_test)
+
+    p = sub.add_parser("hand-calib", help="Record open/fist finger angles for dex-hand retargeting")
+    p.add_argument("--source", default=None,
+                   help="'realsense' (D435), a webcam index (0), or a video path (default: sample)")
+    p.add_argument("--out", default=None, help="output JSON (default: data/hand_calib.json)")
+    p.add_argument("--frames", type=int, default=30, help="frames to average per pose")
+    p.add_argument("--countdown", type=int, default=3, help="seconds of countdown before each pose")
+    p.add_argument("--primary", default="auto", choices=["auto", "left", "right"], help="controlling hand")
+    p.add_argument("--proc-max-side", type=int, default=640, help="downscale longest side before inference (0=off)")
+    p.add_argument("--device", default=None, help="cuda|cpu (default: auto)")
+    p.add_argument("--dtype", default="float16", help="model dtype (float16|float32)")
+    p.set_defaults(func=commands.cmd_hand_calib)
 
     return parser
 
