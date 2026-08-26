@@ -75,11 +75,15 @@ def run_teleop(
 
     writer: Optional[VideoWriter] = None
     dex_targets: Optional[np.ndarray] = None
+    dex_raw: Optional[np.ndarray] = None
     # Per-DOF span of the closed-ratios actually commanded. A range stuck at a single value means
     # the calibration saturates and no finger frame ever changes -- indistinguishable, from the
-    # outside, from a dead serial link.
+    # outside, from a dead serial link. The raw-angle span alongside it shows *why*: whether the
+    # operator's fist ever reaches the calibrated closed angle at all.
     dex_lo: Optional[np.ndarray] = None
     dex_hi: Optional[np.ndarray] = None
+    raw_lo: Optional[np.ndarray] = None
+    raw_hi: Optional[np.ndarray] = None
     window = PreviewWindow(f"xarm-teleop | {type(backend).__name__}", enabled=display)
     track_err: list[float] = []
     n_frames = n_tracked = 0
@@ -115,12 +119,17 @@ def run_teleop(
                     if dex_hand is not None:
                         # finger targets come straight from the hand pose, bypassing the
                         # single-scalar pinch mapping used by the 2-finger gripper
-                        dex_targets = dex_retarget.targets(prim, frame.timestamp)
+                        dex_raw = dex_retarget.raw(prim)
+                        dex_targets = dex_retarget.targets(prim, frame.timestamp, raw=dex_raw)
                         dex_hand.apply(dex_targets)
                         dex_lo = dex_targets if dex_lo is None else np.minimum(dex_lo, dex_targets)
                         dex_hi = dex_targets if dex_hi is None else np.maximum(dex_hi, dex_targets)
+                        raw_lo = dex_raw if raw_lo is None else np.minimum(raw_lo, dex_raw)
+                        raw_hi = dex_raw if raw_hi is None else np.maximum(raw_hi, dex_raw)
                         if n_tracked % 150 == 0:
                             logger.info("dex ratio range so far: %s", _dex_range(dex_lo, dex_hi))
+                            logger.info("dex raw range so far (rad): %s",
+                                        _dex_range(raw_lo, raw_hi))
                     reached, _ = backend.tcp_pose()
                     track_err.append(float(np.linalg.norm(safe_pos - reached)))
                 else:
@@ -136,7 +145,7 @@ def run_teleop(
                         hud.append(f"pinch {prim.pinch_dist*1000:.0f}mm -> grip {closed:.2f}")
                 draw_hud(cam_vis, hud)
                 if dex_targets is not None:
-                    draw_dof_bars(cam_vis, dex_targets, DEX_DOF_NAMES,
+                    draw_dof_bars(cam_vis, dex_targets, DEX_DOF_NAMES, raw=dex_raw,
                                   org=(10, cam_vis.shape[0] - 20 * len(DEX_DOF_NAMES) - 10))
 
                 # right: robot render (sim) or status panel (real)
@@ -176,9 +185,24 @@ def run_teleop(
     wall = time.perf_counter() - t0
     if dex_lo is not None:
         logger.info("dex ratio range: %s", _dex_range(dex_lo, dex_hi))
+        calib = dex_retarget.calib
+        logger.info("dex raw vs calib (rad):")
+        for i, name in enumerate(DEX_DOF_NAMES):
+            logger.info("  %10s  raw seen %+5.2f..%+5.2f | calib open %+5.2f closed %+5.2f "
+                        "| ratio %.2f..%.2f", name, raw_lo[i], raw_hi[i],
+                        calib.open_rad[i], calib.closed_rad[i], dex_lo[i], dex_hi[i])
         if float(np.max(dex_hi - dex_lo)) < 0.1:
             logger.warning("finger targets never moved: the calibration saturates every DOF, so "
                            "the hand held one pose. Re-run 'teleop.py hand-calib'")
+        else:
+            unreached = [DEX_DOF_NAMES[i] for i in range(len(DEX_DOF_NAMES))
+                         if float(dex_hi[i]) < 0.95]
+            if unreached:
+                logger.warning(
+                    "full close never commanded for %s (max ratio < 0.95). If you made a full "
+                    "fist during this run, the calibrated closed angle is beyond what WiLoR "
+                    "reports for your fist -- re-run 'teleop.py hand-calib' squeezing the same "
+                    "fist you use in teleop.", ", ".join(unreached))
 
     stats = {
         "frames": n_frames,

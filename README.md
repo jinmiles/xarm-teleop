@@ -159,6 +159,12 @@ deadband in `src/control/inspire_hand.py` (`CMD_OPEN`/`CMD_CLOSED`, `min_delta`)
 - **Fingers do not move but the hand opens at startup** — the link is fine, the targets are not.
   The run logs `dex ratio range:` every 150 tracked frames and at exit; a range stuck at one value
   means the calibration saturates. Confirm with `--hand-calib none`, then re-run `hand-calib`.
+- **Fingers stop short of a full close** — read the per-DOF `dex raw vs calib` table printed at
+  exit (the camera overlay also shows the live raw angle next to each ratio bar). If the raw angle
+  of your fist stays below the calibrated closed angle, the ratio tops out below 1.0 and the hand
+  cannot fully close: re-run `hand-calib` squeezing the same fist you use during teleop. WiLoR
+  underestimates the curl of a clenched fist, so the closed capture must come from WiLoR's own
+  estimate, not from an assumed anatomical angle.
 - **Wrong finger moves** — the DOF order is `[little, ring, middle, index, thumb_bend, thumb_rot]`.
   Run `hand-test` to see which physical finger each index drives.
 - **Only the thumb rotates the wrong way** — the palm-normal sign comes from the detector's

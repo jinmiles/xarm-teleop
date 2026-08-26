@@ -128,9 +128,12 @@ class DexHandRetargeter:
                 np.clip(np.dot(d / nd, palm_normal(kp, bool(obs.is_right))), -1.0, 1.0)))
         return np.array(curls + [thumb_bend, thumb_rot], dtype=float)
 
-    def targets(self, obs, t: float) -> np.ndarray:
-        """Smoothed closed-ratios for the 6 DOF, ready for InspireHand.apply()."""
-        ratio = self.calib.ratio(self.raw(obs))
+    def targets(self, obs, t: float, raw: Optional[np.ndarray] = None) -> np.ndarray:
+        """Smoothed closed-ratios for the 6 DOF, ready for InspireHand.apply().
+
+        ``raw`` reuses angles the caller already computed via raw() (for diagnostics).
+        """
+        ratio = self.calib.ratio(self.raw(obs) if raw is None else raw)
         if self._filt is None:
             self._filt = OneEuroFilter(self.min_cutoff, self.beta)
         return np.clip(self._filt(ratio, t), 0.0, 1.0)

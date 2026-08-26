@@ -73,8 +73,12 @@ def draw_hud(image_bgr: np.ndarray, lines: list[str], org: tuple[int, int] = (10
 
 
 def draw_dof_bars(image_bgr: np.ndarray, values: np.ndarray, names: tuple[str, ...],
-                  org: tuple[int, int] = (10, 300), width: int = 150) -> None:
-    """Draw one horizontal bar per DOF (values in [0,1], 1 = fully closed) in place."""
+                  org: tuple[int, int] = (10, 300), width: int = 150,
+                  raw: np.ndarray | None = None) -> None:
+    """Draw one horizontal bar per DOF (values in [0,1], 1 = fully closed) in place.
+
+    ``raw`` optionally appends the uncalibrated angle in radians after each ratio.
+    """
     x, y0 = org
     for i, (name, v) in enumerate(zip(names, np.asarray(values, dtype=float))):
         y = y0 + i * 20
@@ -84,5 +88,6 @@ def draw_dof_bars(image_bgr: np.ndarray, values: np.ndarray, names: tuple[str, .
         cv2.rectangle(image_bgr, (bx, y), (bx + width, y + 13), (60, 60, 60), -1)
         fill = int(width * float(np.clip(v, 0.0, 1.0)))
         cv2.rectangle(image_bgr, (bx, y), (bx + fill, y + 13), (0, 200, 255), -1)
-        cv2.putText(image_bgr, f"{v:.2f}", (bx + width + 6, y + 11),
+        label = f"{v:.2f}" if raw is None else f"{v:.2f} {float(raw[i]):+.2f}r"
+        cv2.putText(image_bgr, label, (bx + width + 6, y + 11),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 255, 255), 1, cv2.LINE_AA)
