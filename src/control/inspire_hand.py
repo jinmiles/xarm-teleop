@@ -166,6 +166,7 @@ class InspireHand:
         self.dry_run = bool(dry_run)
         self._ser = None
         self._last: Optional[np.ndarray] = None
+        self._pending: Optional[tuple[int, int]] = None  # (addr, count) of an unchecked write ack
         self._t_last_write: Optional[float] = None
         self._n_writes = 0
         self._n_write_err = 0
@@ -198,25 +199,42 @@ class InspireHand:
         if self._ser is None:
             logger.debug("dry-run tx %s", frame.hex(" "))
             return
+        self._check_pending_ack()
         self._ser.reset_input_buffer()
         self._ser.write(frame)
         self._ser.flush()  # half-duplex RS485: let the frame leave before listening for the ack
         self._n_writes += 1
-        reply = self._ser.read(WRITE_ACK_LEN)
         self._t_last_write = time.perf_counter()
+        self._pending = (addr, len(values))
+
+    def _check_pending_ack(self) -> None:
+        """Validate the previous write's ack from whatever is already buffered. Never blocks.
+
+        Waiting here stalls the whole teleop loop once per frame for a hand that simply does not
+        answer, and the ack is only ever a diagnostic -- the write is what moves the fingers. By
+        the time the next frame goes out the reply has had a full control tick to arrive, so
+        checking it late costs nothing and keeps the loop at camera rate.
+        """
+        if self._pending is None or self._ser is None:
+            return
+        addr, count = self._pending
+        self._pending = None
+        waiting = getattr(self._ser, "in_waiting", 0)
         try:
-            parse_write_ack(reply, self.hand_id, addr, len(values))
+            parse_write_ack(self._ser.read(waiting) if waiting else b"",
+                            self.hand_id, addr, count)
         except ValueError as exc:
             self._n_write_err += 1
-            if self._n_write_err in (1, 10) or self._n_write_err % 100 == 0:
-                logger.warning("no valid ack from hand for register %d (%d so far): %s",
-                               addr, self._n_write_err, exc)
+            if self._n_write_err in (1, 10) or self._n_write_err % 500 == 0:
+                logger.warning("no valid ack from hand for register %d (%d so far; commands are "
+                               "still being sent): %s", addr, self._n_write_err, exc)
             return
         self._n_write_err = 0
 
     def _read_registers(self, addr: int, count: int) -> Optional[list[int]]:
         if self._ser is None:
             return None
+        self._pending = None  # this exchange clears the buffer, so any pending ack is gone
         self._ser.reset_input_buffer()
         self._ser.write(build_read(self.hand_id, addr, count))
         frame = self._ser.read(2 * count + 5)
@@ -274,6 +292,7 @@ class InspireHand:
 
     def close(self) -> None:
         if self._ser is not None:
+            self._check_pending_ack()  # so the counts below include the last frame
             self._ser.close()
             self._ser = None
             # "the fingers never moved" is ambiguous without these: no frames means the retargeting

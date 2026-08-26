@@ -258,8 +258,10 @@ work too; if none is usable the writer falls back to OpenCV mp4v and logs a warn
   (`sudo usermod -aG dialout $USER`, then log out and back in).
 - **Hand does not respond / `no valid ack from hand`** — check the RS485 A/B polarity, the hand id
   (`--hand-id`, default 1) and the baud (`--hand-baud`, default 115200). The warning carries the
-  reason (CRC, wrong id, Modbus exception, or no bytes at all). `hand-test --dry-run` prints the
-  frames without a port so you can confirm the CLI side independently.
+  reason (CRC, wrong id, Modbus exception, or no bytes at all). It is a diagnostic, not a failure:
+  the ack is read from the buffer on the *next* frame and never waited for, so a hand that answers
+  nothing still gets every command and costs the control loop nothing. `hand-test --dry-run`
+  prints the frames without a port so you can confirm the CLI side independently.
 - **Wrong finger moves** — the DOF order is fixed by the vendor as
   `[little, ring, middle, index, thumb_bend, thumb_rot]`; if your unit differs, remap in
   `InspireHand.apply`. Run `hand-test` to see which physical finger each index drives.
