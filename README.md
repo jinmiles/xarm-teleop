@@ -165,10 +165,10 @@ Read before Step 4. Teleop moves a real arm from your hand motion — treat it l
   collision-free box for your cell. Targets are hard-clamped to it.
 - **Start slow.** Keep `--tcp-speed` low (≤ 80 mm/s) and `max_step_m` small (default 0.02 m/tick,
   in `safety.py`) for first runs — this bounds TCP speed.
-- **Remove the gripper from the software too.** With the RH56 on the flange there is no UFACTORY
-  gripper to talk to; `--hand-port` therefore implies `--no-gripper`. Driving an absent gripper
-  makes the controller latch error 19 and reject every servo command afterwards. Use `--gripper`
-  only if a 2-finger gripper really is mounted alongside.
+- **Leave the gripper alone in software too.** With the RH56 on the flange there is no UFACTORY
+  gripper to talk to; `--hand-port` therefore implies `--no-gripper`. Any gripper call latches
+  controller error 19 and the arm then rejects every servo command. Use `--gripper` only if a
+  2-finger gripper really is mounted alongside.
 - **Verify gripper direction** on the bench first (Step 4 with the arm parked): if open/close is
   reversed, flip the gripper mapping in `XArm7Controller.servo_to` (uses `GRIPPER_MAX`; the code
   assumes 0 = closed, `GRIPPER_MAX` = open).
@@ -228,18 +228,14 @@ work too; if none is usable the writer falls back to OpenCV mp4v and logs a warn
 - **xArm won't connect** — `ping` the IP; clear errors in UFACTORY Studio; check firmware; the
   controller must not be in an error/estop state.
 - **`ControllerError, code: 19` / `set_servo_cartesian_aa -> code=1`** — *End Effector
-  Communication Error*: something is talking to a UFACTORY gripper that is not on the flange.
-  Two independent sources, fix both:
-  1. **This code** — run with `--hand-port` (implies `--no-gripper`). The SDK's `set_gripper_*`
-     calls first write the gripper baud rate onto the tool RS485 bus, and that write is what
-     raises the error, so `baud_checkset` is disabled too when no gripper is configured.
-  2. **The controller** — in UFACTORY Studio, uninstall the end effector (*Settings → End
-     Effector / gripper → none*). While it is configured as installed, the controller keeps
-     polling the tool bus and re-latches the error no matter what this code does.
-
-  Then clear the error in Studio and restart. Once an error is latched the arm ignores every servo
-  command while the hand keeps moving, which looks like an arm-only failure — `connect()` now
-  aborts instead of limping into that state.
+  Communication Error*: a gripper call put traffic on the tool RS485 bus with no gripper on the
+  flange to answer. Run with `--hand-port` (implies `--no-gripper`). Note the SDK's `set_gripper_*`
+  calls first write the gripper baud rate onto that bus via `checkset_modbus_baud`, so skipping the
+  gripper commands alone is not enough — `baud_checkset` is disabled too when no gripper is
+  configured. The controller does not poll the tool bus by itself, so nothing needs changing in
+  UFACTORY Studio; a leftover latched error is cleared by `connect()`. Once an error is latched the
+  arm ignores every servo command while the hand keeps moving, which looks like an arm-only
+  failure — `connect()` now aborts instead of limping into that state.
 - **Gripper opens when it should close** — flip the gripper mapping in `XArm7Controller.servo_to`.
 - **Arm overshoots / lags** — lower `--tcp-speed` and `max_step_m`, or raise One-Euro smoothing.
 - **Orientation off** — the controller uses the axis-angle servo (`set_servo_cartesian_aa`);

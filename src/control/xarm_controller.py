@@ -8,7 +8,9 @@ With a dexterous hand mounted in place of the UFACTORY 2-finger gripper, pass
 ``use_gripper=False``: the controller then never touches the gripper API. Enabling or commanding a
 gripper that is not on the tool flange makes the controller latch error 19 ("End Effector
 Communication Error"), after which every motion command is rejected with code 1 and the arm stops
-dead -- the hand keeps working, so it looks like an arm-only failure.
+dead -- the hand keeps working, so it looks like an arm-only failure. The controller does not poll
+the tool bus on its own: touching the gripper API is the only thing that puts traffic on it, which
+is why a script that never calls it drives the same arm with no end effector configured at all.
 
 Hardware is not available yet, so ``dry_run=True`` (the default) exercises the full control path
 without connecting: servo_to updates an internal echo pose that tcp_pose reports back, so the
@@ -35,9 +37,8 @@ GRIPPER_MAX = 850  # UFACTORY gripper: 0 = closed, 850 = open (verify direction 
 
 # Controller errors this loop can actually cause, with the fix rather than the vendor wording.
 ERROR_HINTS = {
-    19: "end effector communication failed -- nothing answers on the tool RS485 bus. Run with "
-        "--no-gripper (implied by --hand-port), and in UFACTORY Studio uninstall the end effector "
-        "so the controller stops polling for it",
+    19: "end effector communication failed -- a gripper call put traffic on the tool RS485 bus "
+        "with nothing on the flange to answer; run with --no-gripper (implied by --hand-port)",
     21: "kinematic error -- the target is unreachable; lower --scale or shrink DEFAULT_WORKSPACE",
     22: "self-collision -- re-home the arm and shrink DEFAULT_WORKSPACE",
     24: "speed limit exceeded -- lower --tcp-speed and --max-step-m",
@@ -78,10 +79,13 @@ class XArm7Controller:
         self.arm.clean_error()
         self.arm.clean_warn()
         self.arm.motion_enable(True)
-        if self.arm.error_code:
+        # arm.error_code is a cache the report thread refreshes asynchronously and clean_error()
+        # does not touch, so query it synchronously before deciding the arm is unusable.
+        code, (err, _warn) = self.arm.get_err_warn_code()
+        if code == 0 and err:
             raise RuntimeError(
-                f"xArm still reports controller error {self.arm.error_code} after clean_error: "
-                + ERROR_HINTS.get(self.arm.error_code, "clear it in UFACTORY Studio and retry"))
+                f"xArm still reports controller error {err} after clean_error: "
+                + ERROR_HINTS.get(err, "clear it in UFACTORY Studio and retry"))
         self.arm.set_collision_sensitivity(self.collision_sensitivity)
         if self.use_gripper:
             self.arm.set_gripper_enable(True)
