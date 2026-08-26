@@ -155,7 +155,13 @@ def cmd_teleop(args) -> int:
     if record is None:
         record = str(paths.OUTPUT_DIR / f"{_source_stem(source)}_teleop.mp4")
 
-    backend = XArm7Controller(ip=args.ip or "0.0.0.0", dry_run=dry_run, tcp_speed=args.tcp_speed)
+    # A dexterous hand occupies the tool flange, so the UFACTORY gripper is not there to talk to:
+    # enabling it would latch controller error 19 and freeze every subsequent servo command.
+    use_gripper = not (args.no_gripper or args.hand_port)
+    if not use_gripper and not args.no_gripper:
+        logger.info("--hand-port given: skipping the UFACTORY gripper (pass --gripper to override)")
+    backend = XArm7Controller(ip=args.ip or "0.0.0.0", dry_run=dry_run, tcp_speed=args.tcp_speed,
+                              use_gripper=use_gripper)
     retarget = Retargeter(scale=args.scale, depth_scale=args.depth_scale, pos_only=args.pos_only)
     safety = SafetyLimiter(max_step_m=args.max_step_m)
     dex_hand, dex_retarget = _build_dex_hand(args)

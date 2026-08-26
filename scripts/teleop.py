@@ -86,6 +86,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="actually command the robot (default: dry-run, no connection)")
     p.add_argument("--tcp-speed", type=float, default=100.0, help="servo TCP speed cap (mm/s)")
     p.add_argument("--max-step-m", type=float, default=0.02, help="max TCP move per tick (m)")
+    p.add_argument("--no-gripper", action="store_true",
+                   help="never touch the UFACTORY gripper (implied by --hand-port)")
+    p.add_argument("--gripper", dest="no_gripper", action="store_false",
+                   help="drive the UFACTORY gripper even with --hand-port")
     p.add_argument("--source", default=None,
                    help="'realsense' (D435), a webcam index (0), or a video path (default: sample)")
     p.add_argument("--record", default=None, help="side-by-side mp4 path")

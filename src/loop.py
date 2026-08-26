@@ -116,7 +116,8 @@ def run_teleop(
                        + ("  ESTOP" if safety.estopped else "")]
                 if prim is not None:
                     highlight_hand(cam_vis, prim)
-                    hud.append(f"pinch {prim.pinch_dist*1000:.0f}mm -> grip {closed:.2f}")
+                    if dex_hand is None:  # the pinch scalar only drives the 2-finger gripper
+                        hud.append(f"pinch {prim.pinch_dist*1000:.0f}mm -> grip {closed:.2f}")
                 draw_hud(cam_vis, hud)
                 if dex_targets is not None:
                     draw_dof_bars(cam_vis, dex_targets, DEX_DOF_NAMES,
@@ -125,8 +126,11 @@ def run_teleop(
                 # right: robot render (sim) or status panel (real)
                 rgb = backend.render()
                 tcp, _ = backend.tcp_pose()
-                status = [f"TCP {tcp[0]:+.2f},{tcp[1]:+.2f},{tcp[2]:+.2f}",
-                          f"gripper {'closed' if closed > 0.5 else 'open'}"]
+                status = [f"TCP {tcp[0]:+.2f},{tcp[1]:+.2f},{tcp[2]:+.2f}"]
+                if dex_hand is None:
+                    status.append(f"gripper {'closed' if closed > 0.5 else 'open'}")
+                elif dex_targets is not None:
+                    status.append(f"hand curl {float(np.mean(dex_targets)):.2f}")
                 if rgb is not None:
                     right = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
                     draw_hud(right, status)

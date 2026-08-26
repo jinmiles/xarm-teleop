@@ -165,6 +165,10 @@ Read before Step 4. Teleop moves a real arm from your hand motion — treat it l
   collision-free box for your cell. Targets are hard-clamped to it.
 - **Start slow.** Keep `--tcp-speed` low (≤ 80 mm/s) and `max_step_m` small (default 0.02 m/tick,
   in `safety.py`) for first runs — this bounds TCP speed.
+- **Remove the gripper from the software too.** With the RH56 on the flange there is no UFACTORY
+  gripper to talk to; `--hand-port` therefore implies `--no-gripper`. Driving an absent gripper
+  makes the controller latch error 19 and reject every servo command afterwards. Use `--gripper`
+  only if a 2-finger gripper really is mounted alongside.
 - **Verify gripper direction** on the bench first (Step 4 with the arm parked): if open/close is
   reversed, flip the gripper mapping in `XArm7Controller.servo_to` (uses `GRIPPER_MAX`; the code
   assumes 0 = closed, `GRIPPER_MAX` = open).
@@ -187,6 +191,7 @@ Read before Step 4. Teleop moves a real arm from your hand motion — treat it l
 | Position scale | `--scale` (use ~1.0 with D435 metric depth) | larger = arm moves more |
 | Home pose | `src/control/xarm_controller.py` → `HOME_Q` | joint angles (rad) |
 | Gripper range/direction | `src/control/xarm_controller.py` → `GRIPPER_MAX`, `servo_to` | verify on hardware |
+| 2-finger gripper on/off | `--no-gripper` / `--gripper` | `--hand-port` implies `--no-gripper` |
 | Smoothing | `--min-cutoff`, `--beta` (One-Euro) | lower cutoff = smoother, more lag |
 | Finger open/closed range | `data/hand_calib.json` via `hand-calib` | per operator; defaults are rough |
 | Finger open/closed commands | `src/control/inspire_hand.py` → `CMD_OPEN`, `CMD_CLOSED` | raw device units, verified on hardware |
@@ -209,7 +214,8 @@ Common flags: `--scale`, `--depth-scale`, `--pos-only`, `--primary auto|left|rig
 `--display` (live window on `live`/`sim`/`teleop`; Esc or `q` ends the run cleanly).
 Dexterous-hand flags on `sim`/`teleop`: `--hand-port` (enables the RH56), `--hand-baud`,
 `--hand-id`, `--hand-speed`, `--hand-force`, `--hand-speed-reg`, `--hand-force-reg`,
-`--hand-calib`, `--hand-dry-run` (build frames without opening the port).
+`--hand-calib`, `--hand-dry-run` (build frames without opening the port). On `teleop`,
+`--hand-port` also implies `--no-gripper`; pass `--gripper` to drive both.
 Outputs are H.264 mp4 (playable in VSCode/browser). The H.264 encoder is probed from the local
 ffmpeg build at runtime (`libx264` -> `h264_nvenc` -> `libopenh264`), so LGPL builds without x264
 work too; if none is usable the writer falls back to OpenCV mp4v and logs a warning.
@@ -221,6 +227,12 @@ work too; if none is usable the writer falls back to OpenCV mp4v and logs a warn
   webcam/video the wrist is monocular (up-to-scale), which is why sim/video use `--scale 3`.
 - **xArm won't connect** — `ping` the IP; clear errors in UFACTORY Studio; check firmware; the
   controller must not be in an error/estop state.
+- **`set_servo_cartesian_aa -> code=1` / `xarm has error, error=19`** — the arm has latched *End
+  Effector Communication Error*: it is trying to reach a UFACTORY gripper that is not on the
+  flange. Run the 5-finger setup with `--hand-port` (which implies `--no-gripper`), clear the
+  error in UFACTORY Studio, and restart. Once any error is latched the arm silently ignores every
+  servo command while the hand keeps moving, which looks like an arm-only failure; the loop now
+  reports the controller error and the fix instead of letting the SDK spam.
 - **Gripper opens when it should close** — flip the gripper mapping in `XArm7Controller.servo_to`.
 - **Arm overshoots / lags** — lower `--tcp-speed` and `max_step_m`, or raise One-Euro smoothing.
 - **Orientation off** — the controller uses the axis-angle servo (`set_servo_cartesian_aa`);
