@@ -1,325 +1,169 @@
 # xarm-teleop
 
-Real-time markerless **teleoperation of a UFACTORY xArm7** from a hand camera. Point an Intel
-RealSense **D435** at your hand: a hand-pose model (**WiLoR**) tracks your wrist and pinch, and
-the robot's end-effector follows your hand while a pinch opens/closes the gripper. With an
-Inspire **RH56** 5-finger hand mounted, each finger is teleoperated individually instead.
+Real-time markerless **teleoperation of a UFACTORY xArm7 + Inspire RH56 5-finger hand** from a
+camera. Point an Intel RealSense **D435** at your hand: a hand-pose model (**WiLoR**) tracks your
+wrist and all 21 keypoints, the arm's end-effector follows your wrist, and each finger of the RH56
+follows the matching finger of your hand.
 
 ```
-D435 (color + depth) ──► WiLoR (wrist 6DOF + 21 keypoints) ──► retarget (wrist→TCP, pinch→gripper,
-                                                               fingers→RH56 6 DOF)
-                                                           ──► safety limiter ──► xArm7 (+ hand)
+D435 (color + depth) ──► WiLoR (wrist 6DOF + 21 keypoints) ──┬─► wrist → TCP ──► safety ──► xArm7
+                                                             └─► fingers → RH56 6 DOF (RS485)
 ```
 
-The same code drives a **MuJoCo simulation** and the **real robot** through one backend
-interface, so you can validate everything in sim before the arm ever moves.
+## 1. How it works
 
-> **Status:** perception, retargeting, simulation, safety, and the control path are implemented
-> and validated. The **D435 streaming** and **real-robot motion** paths follow the standard
-> librealsense / xArm-SDK APIs but must be verified on your hardware during first bring-up (see
-> [Verified vs. needs-hardware](#verified-vs-needs-hardware)).
+**Wrist → arm.** WiLoR gives an up-to-scale wrist pose; the D435 depth at the wrist pixel replaces
+its unreliable camera-Z, so deltas are metric (run with `--scale 1 --depth-scale 1`). Control is
+*relative*: the arm engages on the first tracked frame and follows your motion from there, so you
+can re-index by letting tracking drop. Every target is clamped to a workspace box and a max step
+per tick before it reaches the arm.
 
----
+**Fingers → hand.** Per-finger curl is the summed flexion along each finger chain, and thumb
+rotation is the thumb metacarpal's angle out of the palm plane. These are *angles*, so they are
+independent of your hand size — but not of your range of motion, which is what the calibration in
+§3 captures. The result is 6 closed-ratios in `[0,1]` that map onto the hand's 6 DOF.
 
-## 1. Requirements
+**The RH56 link.** The hand speaks **Modbus RTU** (slave id 1, 8N1 115200), *not* the `EB 90`
+framing in the vendor manual: 6 big-endian int16 registers at `1040..1045`, in the order
+`[little, ring, middle, index, thumb_bend, thumb_rot]`. Values are raw device units, not the
+manual's 0–1000 scale. The driver interpolates between two hardware-verified poses and clamps to
+the envelope they span, so per-DOF direction is handled automatically — the four fingers and the
+thumb bend close by *decreasing*, thumb rotation opposes by *increasing*:
 
-**Hardware**
-- NVIDIA GPU (tested on RTX 3090; ~4 GB VRAM used) with a CUDA 11.8-capable driver
-- Intel RealSense **D435** (USB 3.0)
-- UFACTORY **xArm7** + control box on your network, with a gripper (UFACTORY 2-finger by default)
-- *Optional:* Inspire **RH56** 5-finger hand on RS485 (e.g. `/dev/ttyUSB0`) for per-finger teleop
+```python
+# src/control/inspire_hand.py
+CMD_OPEN   = [1740, 1740, 1740, 1740, 1350, 1500]
+CMD_CLOSED = [1400, 1400, 1400, 1400, 1250, 1650]   # a light grip, not a full fist
+```
 
-**Software**
-- Linux, Python **3.13**, conda (Python 3.9 or older will not work: several dependencies,
-  including mujoco, huggingface_hub and scikit-image, require 3.10+)
-- For MuJoCo offscreen rendering on a headless host: an EGL-capable GL stack (NVIDIA EGL works)
+`CMD_CLOSED` is deliberately short of the real end stops. Widen it once you have checked them with
+`hand-test`.
 
-## 2. Installation
+The same code drives a **MuJoCo simulation** and the real robot through one backend interface, so
+finger retargeting can be validated against a simulated arm before the real one moves.
 
-**One command** (creates a conda env, installs everything in the right order, verifies imports):
+## 2. Setup
+
+**Requirements** — Linux, Python **3.13**, conda, an NVIDIA GPU with a CUDA 11.8-capable driver
+(~4 GB VRAM), a RealSense **D435** on USB 3.0, an **xArm7** on your network, and an Inspire
+**RH56** on RS485 (its own USB adapter, e.g. `/dev/ttyUSB0`).
 
 ```bash
 bash scripts/install_env.sh          # env name: xarm-teleop (pass a name to override)
 conda activate xarm-teleop
+python scripts/teleop.py wilor-image # model check; weights download to the HF cache (~2 GB)
 ```
 
-This recipe is validated on a clean Python 3.13 machine. If you prefer to run the steps
-yourself, they are:
+The script installs torch from the cu118 index first, pins numpy before chumpy and opencv, builds
+chumpy with `--no-build-isolation`, and installs WiLoR-mini with `--no-deps`. That order matters
+on a fresh machine — see the script if you want to run the steps yourself. For the simulation
+backend, fetch the xArm7 MuJoCo model once:
 
 ```bash
-conda create -n xarm-teleop python=3.13 pip setuptools -y && conda activate xarm-teleop
-pip install torch==2.7.1 torchvision==0.22.1 --index-url https://download.pytorch.org/whl/cu118
-pip install "numpy==2.2.6"
-pip install --no-build-isolation "chumpy @ git+https://github.com/mattloper/chumpy"
-pip install -r requirements.txt
-pip install --no-deps "git+https://github.com/warmshao/WiLoR-mini"
+git clone --depth 1 --filter=blob:none \
+    https://github.com/google-deepmind/mujoco_menagerie.git third_party/mujoco_menagerie
 ```
 
-The order and the two odd-looking steps matter on a fresh machine:
-- **torch first** (from the cu118 index) so nothing pulls a CPU build.
-- **numpy pinned** — install it before chumpy and opencv so everything is built against one ABI.
-- **chumpy with `--no-build-isolation`** — its ancient `setup.py` imports `pip`, which is
-  absent inside pip's isolated build env, so an ordinary install fails.
-- **WiLoR-mini with `--no-deps`** — otherwise it rebuilds chumpy from a git URL under isolation
-  and fails again; its dependencies are already installed above.
-
-WiLoR + MANO model weights download automatically to the HuggingFace cache on first run
-(~2 GB). No manual weight setup is needed. Verify with `python scripts/teleop.py wilor-image`.
-
-For the simulation backend (optional but recommended for validation), the xArm7 MuJoCo model is
-fetched once into `third_party/`:
+**Hardware checks**
 
 ```bash
-git clone --depth 1 --filter=blob:none https://github.com/google-deepmind/mujoco_menagerie.git \
-    third_party/mujoco_menagerie
+rs-enumerate-devices | head        # D435 on a USB 3.0 (blue) port
+ping <YOUR_XARM_IP>                # xArm7; enable remote motion in UFACTORY Studio, no errors
+ls -l /dev/ttyUSB0                 # RH56; add yourself to the dialout group for access
 ```
 
-Quick check that the install works (no hardware needed):
+Then bring the hand up on its own — this is the fastest way to prove the RS485 link before any
+camera or arm is involved:
 
 ```bash
-python scripts/teleop.py wilor-image        # runs WiLoR on a test image -> outputs/*.jpg
+python scripts/teleop.py hand-test --port /dev/ttyUSB0
 ```
 
-## 3. Hardware setup
+It refuses to start unless the hand answers a Modbus read, then sweeps each DOF open→bent→open.
+Confirm each named DOF moves the finger it claims.
 
-**D435** — plug into USB 3.0 (blue port). Verify the OS sees it:
+## 3. Calibration
+
+Run once per operator. It records your own open-hand and fist finger angles, which is what turns
+raw curl into a usable 0–1 ratio:
+
 ```bash
-rs-enumerate-devices | head        # from librealsense; or just run the perception test below
+python scripts/teleop.py hand-calib --source realsense    # hold open hand, then a fist
 ```
 
-**xArm7** — connect the control box to your network and note its IP (default often `192.168.1.xxx`).
+Written to `data/hand_calib.json` and picked up automatically by `sim`/`teleop`, which take
+`--hand-calib <path>` to point elsewhere and `--hand-calib none` to force the built-in defaults.
+**Be in the pose before the countdown ends** —
+an "open" capture that is really a half-fist leaves no usable span, and every DOF then saturates
+to a constant. Startup logs the span and warns per DOF when it is under 0.15 rad.
+
+## 4. Run the 5-finger teleop
+
+Validate against the simulated arm first — the hand is real, the arm is not:
+
 ```bash
-ping <YOUR_XARM_IP>                # must succeed
-```
-Enable the controller for remote motion (UFACTORY Studio → in remote/idle state, no active errors).
-
-**Inspire RH56 dexterous hand (optional)** — RS485 on its own USB adapter, 8N1 115200, hand id 1.
-```bash
-ls -l /dev/ttyUSB0                 # must exist; add yourself to the dialout group for access
-python scripts/teleop.py hand-test --port /dev/ttyUSB0     # sweeps each DOF, one at a time
-```
-The hand speaks **Modbus RTU** (slave id 1), *not* the `EB 90` framing in the RH56 manual: the
-6 DOF are written as big-endian int16 to holding registers `1040..1045` in the order
-`[little, ring, middle, index, thumb_bend, thumb_rot]`. Commands are raw device units, not the
-manual's 0–1000 scale — the driver interpolates between the two hardware-verified poses in
-`src/control/inspire_hand.py` (`CMD_OPEN` / `CMD_CLOSED`) and clamps to the envelope they span, so
-the four fingers and the thumb bend close by *decreasing* while thumb rotation opposes by
-*increasing*. `CMD_CLOSED` is a deliberate light grip; widen it only after checking the real end
-stops. Watch the sweep and confirm each named DOF moves the finger it claims before going further.
-Without `--hand-port`, everything below runs the 2-finger gripper path exactly as before.
-
-## 4. Run it on your D435 + xArm7
-
-Go through these **in order** — each step de-risks the next.
-
-**Step 1 — Perception only (no robot).** Confirm the D435 tracks your hand and reports *metric*
-wrist depth (~0.3–0.8 m), not the monocular fallback:
-```bash
-python scripts/teleop.py live --source realsense --display     # live window if you have a display
-python scripts/teleop.py live --source realsense               # else writes outputs/realsense_live.mp4
-```
-You should see a hand skeleton, a yellow box on the controlling hand, and `wrist(m)` with a
-realistic depth. Pinch your thumb+index — `pinch` should drop toward ~10 mm.
-
-**Step 2 — Retargeting in simulation (no robot risk).** With metric depth, use `--scale 1`:
-```bash
-python scripts/teleop.py sim --source realsense --scale 1.0 --depth-scale 1.0 --display
-```
-Move your hand — the simulated xArm7 should follow; pinch to close the gripper. Tune
-`--scale`, `--min-cutoff`, `--beta` until motion feels right. Output: `outputs/realsense_sim.mp4`.
-`--display` opens the live side-by-side window (camera overlay | robot) — Esc or `q` stops the run
-cleanly. Drop it when running headless/over SSH; recording is unaffected.
-
-**Step 2b — Dexterous hand (only if you run the RH56).** Calibrate your own hand once, then
-teleop the fingers against the simulated arm — the hand is real, the arm is not, which is the
-safest way to validate finger retargeting:
-```bash
-python scripts/teleop.py hand-calib --source realsense          # hold open hand, then a fist
 python scripts/teleop.py sim --source realsense --scale 1.0 --depth-scale 1.0 \
     --hand-port /dev/ttyUSB0 --display
 ```
-`hand-calib` records your open/fist finger angles to `data/hand_calib.json` (picked up
-automatically; override with `--hand-calib`). The live window shows one bar per DOF so you can see
-what is being commanded. Curl each finger in turn and check the right one moves.
 
-**Step 3 — Real robot, DRY-RUN (no motion).** Validates the exact commands without connecting:
-```bash
-python scripts/teleop.py teleop --source realsense --scale 1.0 --depth-scale 1.0 --display
-```
-The right panel shows the **commanded** TCP. Confirm it stays inside your workspace box and moves
-sensibly with your hand.
+Curl each finger in turn and check the right one moves. The window shows one bar per DOF, so you
+can see what is being commanded. Then the real arm, at low speed with the E-stop in reach:
 
-**Step 4 — Real robot, EXECUTE (low speed, E-stop in hand).** Only after Steps 1–3 look right and
-you've read [Safety](#5-safety):
 ```bash
 python scripts/teleop.py teleop --execute --ip <YOUR_XARM_IP> \
-    --source realsense --scale 1.0 --depth-scale 1.0 --tcp-speed 80
+    --source realsense --scale 1.0 --depth-scale 1.0 --tcp-speed 80 \
+    --hand-port /dev/ttyUSB0 --display
 ```
+
+Drop `--execute` for a dry run that builds every command without connecting to the arm. Drop
+`--display` when headless; recording to `outputs/` is unaffected.
+
+`--hand-port` implies `--no-gripper`: the RH56 occupies the tool flange, and any UFACTORY gripper
+call would latch controller error 19. Pass `--gripper` only if a 2-finger gripper really is
+mounted alongside.
+
+| Flag | Default | Notes |
+|---|---|---|
+| `--scale`, `--depth-scale` | 3.0, 0.4 | use `1.0`/`1.0` with D435 metric depth |
+| `--tcp-speed` | 100 mm/s | keep ≤ 80 for first runs |
+| `--primary` | `right` | also overrides the detector's handedness, which sets thumb-rotation direction |
+| `--min-cutoff`, `--beta` | 1.0, 0.02 | One-Euro smoothing; lower cutoff = smoother, more lag |
+| `--hand-rate` | 20 Hz | cap on finger command rate (RS485 needs quiet between frames) |
+| `--hand-id`, `--hand-baud` | 1, 115200 | RH56 Modbus address / baud |
+
+Other tunables live in the code: the workspace box and max step per tick in
+`src/control/safety.py` (`DEFAULT_WORKSPACE`, `max_step_m`), the home pose in
+`src/control/xarm_controller.py` (`HOME_Q`), and the finger command envelope and anti-jitter
+deadband in `src/control/inspire_hand.py` (`CMD_OPEN`/`CMD_CLOSED`, `min_delta`).
 
 ## 5. Safety
 
-Read before Step 4. Teleop moves a real arm from your hand motion — treat it like a live robot.
+- **Physical E-stop within reach.** The camera is not a safety system.
+- **Set `DEFAULT_WORKSPACE` in `src/control/safety.py`** to a reachable, collision-free box for
+  your cell. Targets are hard-clamped to it.
+- **Start slow** — `--tcp-speed 80` or lower, and a small `max_step_m` (0.02 m/tick default).
+- **`--hand-port` moves real fingers even when the arm is in dry-run.** Bench-test with
+  `hand-test` first.
+- **The hand holds its last position when tracking is lost.** It will not drop a grasped object,
+  but it will not open either.
 
-- **Physical E-stop within reach.** The camera is *not* a safety system.
-- **Set your workspace box.** Edit `DEFAULT_WORKSPACE` in `src/control/safety.py` to a reachable,
-  collision-free box for your cell. Targets are hard-clamped to it.
-- **Start slow.** Keep `--tcp-speed` low (≤ 80 mm/s) and `max_step_m` small (default 0.02 m/tick,
-  in `safety.py`) for first runs — this bounds TCP speed.
-- **Leave the gripper alone in software too.** With the RH56 on the flange there is no UFACTORY
-  gripper to talk to; `--hand-port` therefore implies `--no-gripper`. Any gripper call latches
-  controller error 19 and the arm then rejects every servo command. Use `--gripper` only if a
-  2-finger gripper really is mounted alongside.
-- **Verify gripper direction** on the bench first (Step 4 with the arm parked): if open/close is
-  reversed, flip the gripper mapping in `XArm7Controller.servo_to` (uses `GRIPPER_MAX`; the code
-  assumes 0 = closed, `GRIPPER_MAX` = open).
-- **Clear the area** around the robot and keep the deadman/clutch in mind: control engages on the
-  first tracked frame and re-indexes after a tracking loss.
-- **Dexterous hand**: `--hand-port` moves real fingers even when the arm is in dry-run. Bench-test
-  with `hand-test` first. Grip force is **not** limited by default — `--hand-force` is only written
-  if you also pass `--hand-force-reg`, since FORCE_SET's register is unconfirmed on this hand — so
-  the travel limit is `CMD_CLOSED` in `src/control/inspire_hand.py`, which stops at a light grip.
-  Remember the hand *holds its last position* when tracking is lost — it will not drop a grasped
-  object, but it will not open either.
+## 6. Troubleshooting
 
-## 6. Configuration & tuning
-
-| What | Where | Notes |
-|---|---|---|
-| Reachable workspace box | `src/control/safety.py` → `DEFAULT_WORKSPACE` | **edit for your cell** |
-| Max TCP speed / step | `src/control/safety.py` → `max_step_m`, or `--tcp-speed` | keep low at first |
-| Camera→robot axis map | `src/retarget/wrist_to_tcp.py` → `default_align()` | if motion is mirrored/rotated |
-| Position scale | `--scale` (use ~1.0 with D435 metric depth) | larger = arm moves more |
-| Home pose | `src/control/xarm_controller.py` → `HOME_Q` | joint angles (rad) |
-| Gripper range/direction | `src/control/xarm_controller.py` → `GRIPPER_MAX`, `servo_to` | verify on hardware |
-| 2-finger gripper on/off | `--no-gripper` / `--gripper` | `--hand-port` implies `--no-gripper` |
-| Smoothing | `--min-cutoff`, `--beta` (One-Euro) | lower cutoff = smoother, more lag |
-| Finger open/closed range | `data/hand_calib.json` via `hand-calib` | per operator; defaults are rough |
-| Finger open/closed commands | `src/control/inspire_hand.py` → `CMD_OPEN`, `CMD_CLOSED` | raw device units, verified on hardware |
-| Hand speed / grip force | `--hand-speed`, `--hand-force` + `--hand-speed-reg`, `--hand-force-reg` | skipped unless you supply the registers |
-| Finger command deadband | `src/control/inspire_hand.py` → `min_delta` | anti-jitter, in raw device units |
-| Finger command rate | `--hand-rate` (Hz, default 20) | RS485 is half-duplex: frames need quiet between them |
-
-## 7. Command reference
-
-```bash
-python scripts/teleop.py wilor-image [--image IMG]        # Phase 0: model check on a still image
-python scripts/teleop.py live   --source realsense|0|VID  # Phase 1: perception + overlay
-python scripts/teleop.py sim    --source realsense|0|VID  # Phase 2: drive MuJoCo xArm7
-python scripts/teleop.py teleop --source realsense|0|VID  # Phase 3: real xArm7 (dry-run)
-python scripts/teleop.py teleop --execute --ip IP ...     # Phase 3: real xArm7 (moves!)
-python scripts/teleop.py hand-test  --port /dev/ttyUSB0   # RH56 bring-up: sweep each DOF
-python scripts/teleop.py hand-calib --source realsense    # record open/fist finger angles
-```
-Common flags: `--scale`, `--depth-scale`, `--pos-only`, `--primary auto|left|right` (default
-`right`; an explicit choice also overrides the detector's handedness, which sets the
-thumb-rotation direction),
-`--min-cutoff`, `--beta`, `--proc-max-side` (downscale before inference), `--device`, `--record`,
-`--display` (live window on `live`/`sim`/`teleop`; Esc or `q` ends the run cleanly).
-Dexterous-hand flags on `sim`/`teleop`: `--hand-port` (enables the RH56), `--hand-baud`,
-`--hand-id`, `--hand-speed`, `--hand-force`, `--hand-speed-reg`, `--hand-force-reg`,
-`--hand-calib`, `--hand-dry-run` (build frames without opening the port). On `teleop`,
-`--hand-port` also implies `--no-gripper`; pass `--gripper` to drive both.
-Outputs are H.264 mp4 (playable in VSCode/browser). The H.264 encoder is probed from the local
-ffmpeg build at runtime (`libx264` -> `h264_nvenc` -> `libopenh264`), so LGPL builds without x264
-work too; if none is usable the writer falls back to OpenCV mp4v and logs a warning.
-
-## 8. Troubleshooting
-
-- **D435 not found** — use a USB 3.0 port; check `rs-enumerate-devices`; replug.
-- **Wrist depth looks wrong / huge** — depth fusion only runs with `--source realsense`; on a
-  webcam/video the wrist is monocular (up-to-scale), which is why sim/video use `--scale 3`.
-- **xArm won't connect** — `ping` the IP; clear errors in UFACTORY Studio; check firmware; the
-  controller must not be in an error/estop state.
-- **`ControllerError, code: 19` / `set_servo_cartesian_aa -> code=1`** — *End Effector
-  Communication Error*: a gripper call put traffic on the tool RS485 bus with no gripper on the
-  flange to answer. Run with `--hand-port` (implies `--no-gripper`). Note the SDK's `set_gripper_*`
-  calls first write the gripper baud rate onto that bus via `checkset_modbus_baud`, so skipping the
-  gripper commands alone is not enough — `baud_checkset` is disabled too when no gripper is
-  configured. The controller does not poll the tool bus by itself, so nothing needs changing in
-  UFACTORY Studio; a leftover latched error is cleared by `connect()`. Once an error is latched the
-  arm ignores every servo command while the hand keeps moving, which looks like an arm-only
-  failure — `connect()` now aborts instead of limping into that state.
-- **Gripper opens when it should close** — flip the gripper mapping in `XArm7Controller.servo_to`.
-- **Arm overshoots / lags** — lower `--tcp-speed` and `max_step_m`, or raise One-Euro smoothing.
-- **Orientation off** — the controller uses the axis-angle servo (`set_servo_cartesian_aa`);
-  verify your firmware's `get_position_aa` convention during bring-up. Use `--pos-only` to ignore
-  orientation while you debug position.
-- **`Unrecognized option 'preset'` / recording dies with `BrokenPipeError`** — an ffmpeg build
-  without libx264 (common with conda-forge LGPL packages). Handled automatically now: the encoder
-  is probed at startup and libopenh264 is used instead. To get x264 back:
-  `conda install -c conda-forge 'ffmpeg=*=*gpl*'`.
-- **`--display` shows nothing** — over SSH you need `ssh -X`/`-Y` (or run on the robot PC's own
-  session). Without a usable display the window disables itself with a warning and the run keeps
-  going; the mp4 is still written. The MuJoCo offscreen render is separate and unaffected.
-- **`pip check` complains about torch / ultralytics** — WiLoR-mini declares stale bounds
-  (`torch<=2.5`, `ultralytics==8.1.34`). The pinned versions are newer and validated; the warning
-  is cosmetic. Downgrade to `torch 2.5.1+cu118` / `ultralytics 8.1.34` if you want it silent.
-- **`Permission denied: /dev/ttyUSB0`** — add yourself to the `dialout` group
-  (`sudo usermod -aG dialout $USER`, then log out and back in).
-- **`no reply from the hand ... after 3 probes`** — the hand is not on the bus. Check the power
-  first: a powered-down hand rests in the open pose and is indistinguishable, from the camera
-  side, from teleop that tracks perfectly and never grips. Then the RS485 A/B wiring, `--hand-id`,
-  `--hand-baud`, and the port. Every command path starts with this probe (a Modbus read, which a
-  live device must answer), so a dead hand stops the run instead of wasting it; `--hand-skip-probe`
-  overrides.
-- **Hand does not respond / `no valid ack from hand`** — check the RS485 A/B polarity, the hand id
-  (`--hand-id`, default 1) and the baud (`--hand-baud`, default 115200). The warning carries the
-  reason (CRC, wrong id, Modbus exception, or no bytes at all). It is a diagnostic, not a failure:
-  the ack is read from the buffer on the *next* frame and never waited for, so a hand that answers
-  nothing still gets every command and costs the control loop nothing. `hand-test --dry-run`
-  prints the frames without a port so you can confirm the CLI side independently.
-- **Wrong finger moves** — the DOF order is fixed by the vendor as
-  `[little, ring, middle, index, thumb_bend, thumb_rot]`; if your unit differs, remap in
-  `InspireHand.apply`. Run `hand-test` to see which physical finger each index drives.
-- **Fingers do not move / the hand stays open** — the hand opens once at startup, so if that
-  much happens the serial link is fine and the finger *targets* are the problem. The run logs
-  `dex ratio range: little=0.00-0.00, ...` every 150 tracked frames and at exit: a range stuck at
-  one value means the calibration saturates, i.e. `ratio()` clips to a constant and the deadband
-  suppresses every frame. Confirm with `--hand-calib none` (built-in defaults, no recapture) and
-  then re-run `hand-calib`. If instead the hand never opens at startup, the link is the problem:
-  go back to `hand-test`, and check `inspire hand closed: ... N frames written, M unacked`.
+- **`no reply from the hand ... after 3 probes`** — check the power first. A powered-down hand
+  rests in the open pose and is indistinguishable, from the camera side, from teleop that tracks
+  perfectly and never grips. Then RS485 A/B polarity, `--hand-id`, `--hand-baud`, the port.
+- **`ControllerError, code: 19` / `set_servo_cartesian_aa -> code=1`** — a gripper call put traffic
+  on the tool RS485 bus with no gripper to answer. Run with `--hand-port` (implies `--no-gripper`).
+  Nothing needs changing in UFACTORY Studio; `connect()` clears a leftover latched error.
+- **`Permission denied: /dev/ttyUSB0`** — `sudo usermod -aG dialout $USER`, then re-login.
+- **Fingers do not move but the hand opens at startup** — the link is fine, the targets are not.
+  The run logs `dex ratio range:` every 150 tracked frames and at exit; a range stuck at one value
+  means the calibration saturates. Confirm with `--hand-calib none`, then re-run `hand-calib`.
+- **Wrong finger moves** — the DOF order is `[little, ring, middle, index, thumb_bend, thumb_rot]`.
+  Run `hand-test` to see which physical finger each index drives.
 - **Only the thumb rotates the wrong way** — the palm-normal sign comes from the detector's
-  handedness. Pass `--primary right` (the default) or `--primary left` to state which hand you
-  teleop with instead of letting the detector decide.
-- **Fingers barely move / slam shut** — first recalibrate (`hand-calib`): a small open/closed span
-  in `data/hand_calib.json` means the captured poses were too similar, and the command warns per
-  DOF when the span is under 0.15 rad. If the ratios look right but the travel does not, widen
-  `CMD_OPEN` / `CMD_CLOSED` in `src/control/inspire_hand.py` — the defaults stop at a light grip.
-- **Slow inference (<20 fps)** — expected on eager PyTorch (~50 ms/frame single hand on a 3090);
-  the control loop is decoupled from perception. See `docs/PLAN.md` for the optimization path.
-
-## 9. Verified vs. needs-hardware
-
-**Verified without hardware:** WiLoR perception, retargeting, MuJoCo sim teleop, safety limits,
-the full control code path (dry-run), and the depth back-projection math.
-
-**Verified without hardware (environment):** the full Python 3.13 / CUDA 11.8 stack above —
-fresh conda env, WiLoR inference on a test image (~50 ms/frame on a 3090), a MuJoCo sim teleop run
-with H.264 recording, and the CPU-only test scripts.
-
-**Verified without hardware (dex hand):** RH56 Modbus RTU frame construction byte-for-byte against
-a bench script confirmed on an RH56F1, reply/exception validation and a register round-trip against
-a fake-serial emulator, and the MANO -> 6-DOF finger retargeting on synthetic open/half/fist
-skeletons.
-
-**Needs on-hardware verification (first bring-up):** D435 live streaming; xArm7 motion, gripper
-direction, and axis-angle pose convention; end-to-end latency; RH56 serial link, DOF order,
-angle direction, thumb-rotation sense, the usable end stops beyond the light-grip default, and the
-register addresses for SPEED_SET / FORCE_SET / actual angle (only ANGLE_SET is confirmed).
-
-## 10. Project layout
-
-```
-scripts/teleop.py        single CLI entrypoint (thin; dispatches into src/)
-src/
-  loop.py                backend-agnostic teleop loop (perception→retarget→safety→robot)
-  camera/                CameraSource: realsense (D435) / webcam / video + factory
-  perception/            WiLoR wrapper (single hand) + real-time tracker + depth lift + overlay
-  retarget/              wrist 6DOF → TCP (clutch/relative), pinch → gripper, fingers → dex hand
-  control/               RobotBackend, EndEffector, SafetyLimiter, xArm7 controller, RH56 hand
-  sim/                   MuJoCo xArm7 backend (differential IK + gripper)
-  paths.py log.py video.py display.py commands.py
-third_party/             mujoco_menagerie (fetched on demand; git-ignored)
-outputs/                 H.264 mp4 / images (git-ignored)
-docs/PLAN.md             phased implementation plan
-```
+  handedness. State your hand explicitly with `--primary right` or `--primary left`.
+- **Wrist depth looks wrong** — depth fusion only runs with `--source realsense`; on a webcam or
+  video the wrist is monocular and up-to-scale, which is why those use `--scale 3`.
+- **Slow inference (<20 fps)** — expected on eager PyTorch (~50 ms/frame on a 3090); the control
+  loop is decoupled from perception.
