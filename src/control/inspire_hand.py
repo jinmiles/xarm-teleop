@@ -159,6 +159,7 @@ class InspireHand:
         self.dry_run = bool(dry_run)
         self._ser = None
         self._last: Optional[np.ndarray] = None
+        self._n_writes = 0
         self._n_write_err = 0
 
     # --- transport ------------------------------------------------------------------------
@@ -191,6 +192,8 @@ class InspireHand:
             return
         self._ser.reset_input_buffer()
         self._ser.write(frame)
+        self._ser.flush()  # half-duplex RS485: let the frame leave before listening for the ack
+        self._n_writes += 1
         reply = self._ser.read(WRITE_ACK_LEN)  # short timeout keeps the control loop moving
         try:
             parse_write_ack(reply, self.hand_id, addr, len(values))
@@ -261,4 +264,8 @@ class InspireHand:
         if self._ser is not None:
             self._ser.close()
             self._ser = None
-            logger.info("inspire hand closed: %s", self.port)
+            # "the fingers never moved" is ambiguous without these: no frames means the retargeting
+            # or the deadband held it still, frames with errors means the link is the problem.
+            logger.info("inspire hand closed: %s (%d frames written, %d unacked; last command %s)",
+                        self.port, self._n_writes, self._n_write_err,
+                        self._last.tolist() if self._last is not None else "none")

@@ -186,8 +186,19 @@ def _build_dex_hand(args):
         return None, None
     calib_path = Path(args.hand_calib) if args.hand_calib else paths.HAND_CALIB
     if calib_path.exists():
+        from .retarget.dex_hand import DOF_NAMES as _DEX_NAMES
+
         calib = DexCalibration.load(calib_path)
-        logger.info("dex hand calibration: %s", calib_path)
+        # A narrow span saturates ratio() to a constant, which reaches the hand as one frame the
+        # deadband then suppresses -- i.e. fingers that never move, with nothing else to show why.
+        span = calib.closed_rad - calib.open_rad
+        logger.info("dex hand calibration: %s (open->fist span %s rad)",
+                    calib_path, ", ".join(f"{n}={s:+.2f}" for n, s in zip(_DEX_NAMES, span)))
+        narrow = [n for n, s in zip(_DEX_NAMES, span) if abs(s) < 0.15]
+        if narrow:
+            logger.warning("calibration span is tiny for %s: those DOF will barely move. "
+                           "Re-run 'teleop.py hand-calib' with a wider open/fist difference",
+                           ", ".join(narrow))
     else:
         calib = None
         logger.warning("no hand calibration at %s; using rough defaults "

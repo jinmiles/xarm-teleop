@@ -79,6 +79,9 @@ def run_teleop(
     try:
         if dex_hand is not None:
             dex_hand.connect()  # inside the try: a serial failure must still close the arm
+            # Open once before teleop: a known start pose, and visible proof at second zero that
+            # the serial link works -- without it a dead link looks like dead retargeting.
+            dex_hand.open_hand()
         with open_source(source) as cam:
             out_fps = cam.fps or 30.0
             intr = getattr(cam, "intrinsics", None)  # set by depth cameras (D435)

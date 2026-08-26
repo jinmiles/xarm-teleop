@@ -19,4 +19,7 @@ class EndEffector(Protocol):
     def apply(self, closed: np.ndarray) -> None:
         """Command the effector from per-DOF closed-ratios in [0,1] (1 = fully closed)."""
 
+    def open_hand(self) -> None:
+        """Move to the fully open pose (used as a known start state after connect)."""
+
     def close(self) -> None: ...

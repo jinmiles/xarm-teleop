@@ -209,7 +209,9 @@ python scripts/teleop.py teleop --execute --ip IP ...     # Phase 3: real xArm7 
 python scripts/teleop.py hand-test  --port /dev/ttyUSB0   # RH56 bring-up: sweep each DOF
 python scripts/teleop.py hand-calib --source realsense    # record open/fist finger angles
 ```
-Common flags: `--scale`, `--depth-scale`, `--pos-only`, `--primary auto|left|right`,
+Common flags: `--scale`, `--depth-scale`, `--pos-only`, `--primary auto|left|right` (default
+`right`; an explicit choice also overrides the detector's handedness, which sets the
+thumb-rotation direction),
 `--min-cutoff`, `--beta`, `--proc-max-side` (downscale before inference), `--device`, `--record`,
 `--display` (live window on `live`/`sim`/`teleop`; Esc or `q` ends the run cleanly).
 Dexterous-hand flags on `sim`/`teleop`: `--hand-port` (enables the RH56), `--hand-baud`,
@@ -260,6 +262,14 @@ work too; if none is usable the writer falls back to OpenCV mp4v and logs a warn
 - **Wrong finger moves** — the DOF order is fixed by the vendor as
   `[little, ring, middle, index, thumb_bend, thumb_rot]`; if your unit differs, remap in
   `InspireHand.apply`. Run `hand-test` to see which physical finger each index drives.
+- **Fingers do not move at all** — the run summary line (`inspire hand closed: ... N frames
+  written, M unacked`) separates the two causes. `N` near zero means the retargeting never changed
+  the command: check the `open->fist span` logged at startup and re-run `hand-calib` if a DOF is
+  flagged as tiny. `N` large with `M` just as large means the link is the problem: the hand should
+  visibly open the moment teleop starts, and if it does not, go back to `hand-test`.
+- **Only the thumb rotates the wrong way** — the palm-normal sign comes from the detector's
+  handedness. Pass `--primary right` (the default) or `--primary left` to state which hand you
+  teleop with instead of letting the detector decide.
 - **Fingers barely move / slam shut** — first recalibrate (`hand-calib`): a small open/closed span
   in `data/hand_calib.json` means the captured poses were too similar, and the command warns per
   DOF when the span is under 0.15 rad. If the ratios look right but the travel does not, widen

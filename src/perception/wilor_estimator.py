@@ -139,12 +139,16 @@ class WiLoREstimator:
     def _select(self, cands: list[tuple[np.ndarray, float]]) -> Optional[tuple[np.ndarray, float]]:
         if not cands:
             return None
-        pool = cands
+        pool, forced = cands, None
         if self.primary == "right":
-            pool = [c for c in cands if round(c[1]) == 1] or cands
+            pool, forced = [c for c in cands if round(c[1]) == 1] or cands, 1.0
         elif self.primary == "left":
-            pool = [c for c in cands if round(c[1]) == 0] or cands
-        return max(pool, key=lambda c: (c[0][2] - c[0][0]) * (c[0][3] - c[0][1]))  # largest bbox
+            pool, forced = [c for c in cands if round(c[1]) == 0] or cands, 0.0
+        bbox, is_right = max(pool, key=lambda c: (c[0][2] - c[0][0]) * (c[0][3] - c[0][1]))
+        # An explicit --primary is the operator telling us which hand they teleop with, so it wins
+        # over the detector's handedness class -- a mislabel there flips the palm normal and with
+        # it the thumb-rotation direction, while the four fingers look fine.
+        return bbox, (is_right if forced is None else forced)
 
     @staticmethod
     def _parse(det: dict, kp2d_scale: float = 1.0) -> HandObservation:

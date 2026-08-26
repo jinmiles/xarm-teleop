@@ -51,8 +51,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--record", default=None, help="write annotated mp4 to this path")
     p.add_argument("--display", action="store_true", help="show a live window (needs a display)")
     p.add_argument("--max-frames", type=int, default=None, help="stop after N frames")
-    p.add_argument("--primary", default="auto", choices=["auto", "left", "right"],
-                   help="which hand controls (default: auto = largest)")
+    p.add_argument("--primary", default="right", choices=["auto", "left", "right"],
+                   help="which hand controls (default: right; 'auto' = largest bbox)")
     p.add_argument("--min-cutoff", type=float, default=1.0, help="One-Euro min cutoff")
     p.add_argument("--beta", type=float, default=0.02, help="One-Euro speed coefficient")
     p.add_argument("--proc-max-side", type=int, default=640,
@@ -71,7 +71,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--scale", type=float, default=3.0, help="hand->robot position scale")
     p.add_argument("--depth-scale", type=float, default=0.4, help="scale for the (noisy) camera depth axis")
     p.add_argument("--pos-only", action="store_true", help="ignore hand orientation (position teleop)")
-    p.add_argument("--primary", default="auto", choices=["auto", "left", "right"], help="controlling hand")
+    p.add_argument("--primary", default="right", choices=["auto", "left", "right"], help="controlling hand")
     p.add_argument("--min-cutoff", type=float, default=1.0, help="One-Euro min cutoff")
     p.add_argument("--beta", type=float, default=0.02, help="One-Euro speed coefficient")
     p.add_argument("--proc-max-side", type=int, default=640, help="downscale longest side before inference (0=off)")
@@ -99,7 +99,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--scale", type=float, default=3.0, help="hand->robot position scale")
     p.add_argument("--depth-scale", type=float, default=0.4, help="scale for the (noisy) camera depth axis")
     p.add_argument("--pos-only", action="store_true", help="ignore hand orientation")
-    p.add_argument("--primary", default="auto", choices=["auto", "left", "right"], help="controlling hand")
+    p.add_argument("--primary", default="right", choices=["auto", "left", "right"], help="controlling hand")
     p.add_argument("--min-cutoff", type=float, default=1.0, help="One-Euro min cutoff")
     p.add_argument("--beta", type=float, default=0.02, help="One-Euro speed coefficient")
     p.add_argument("--proc-max-side", type=int, default=640, help="downscale longest side before inference (0=off)")
@@ -128,7 +128,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", default=None, help="output JSON (default: data/hand_calib.json)")
     p.add_argument("--frames", type=int, default=30, help="frames to average per pose")
     p.add_argument("--countdown", type=int, default=3, help="seconds of countdown before each pose")
-    p.add_argument("--primary", default="auto", choices=["auto", "left", "right"], help="controlling hand")
+    p.add_argument("--primary", default="right", choices=["auto", "left", "right"], help="controlling hand")
     p.add_argument("--proc-max-side", type=int, default=640, help="downscale longest side before inference (0=off)")
     p.add_argument("--device", default=None, help="cuda|cpu (default: auto)")
     p.add_argument("--dtype", default="float16", help="model dtype (float16|float32)")
