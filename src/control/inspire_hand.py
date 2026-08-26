@@ -51,6 +51,7 @@ CMD_MIN = np.minimum(CMD_OPEN, CMD_CLOSED)
 CMD_MAX = np.maximum(CMD_OPEN, CMD_CLOSED)
 
 WRITE_ACK_LEN = 8
+PROBE_ATTEMPTS = 3  # a Modbus read must be answered, so silence here means nothing is on the bus
 
 
 def crc16(data: bytes) -> int:
@@ -142,6 +143,7 @@ class InspireHand:
         speed_reg: Optional[int] = None,
         force_reg: Optional[int] = None,
         angle_act_reg: Optional[int] = None,
+        probe: bool = True,
         dry_run: bool = False,
     ) -> None:
         self.port = port
@@ -163,6 +165,7 @@ class InspireHand:
         self.speed_reg = speed_reg
         self.force_reg = force_reg
         self.angle_act_reg = angle_act_reg
+        self.probe = bool(probe)
         self.dry_run = bool(dry_run)
         self._ser = None
         self._last: Optional[np.ndarray] = None
@@ -175,7 +178,7 @@ class InspireHand:
     def connect(self) -> None:
         if self.dry_run:
             logger.warning("inspire hand DRY-RUN: frames are built and logged, not sent")
-        else:
+        elif self._ser is None:  # an already-injected port (tests, emulators) is used as-is
             import serial  # pyserial; imported lazily so the repo works without a hand
             self._ser = serial.Serial(self.port, self.baud, timeout=self.timeout,
                                       write_timeout=max(self.timeout, 0.2))
@@ -189,10 +192,27 @@ class InspireHand:
             logger.info("hand speed/force not written: only ANGLE_SET (register %d) is a verified "
                         "address on this hand; pass the real ones via speed_reg/force_reg",
                         REG_ANGLE_SET)
-        setpoint = self.read_angle_set()
+        setpoint = self._probe()
         if setpoint is not None:
-            logger.info("hand ANGLE_SET at connect: %s",
+            logger.info("hand responding on %s: ANGLE_SET = %s", self.port,
                         ", ".join(f"{n}={a}" for n, a in zip(DOF_NAMES, setpoint)))
+        elif self.probe and not self.dry_run:
+            raise RuntimeError(
+                f"no reply from the hand on {self.port} (id={self.hand_id}, {self.baud} baud) "
+                f"after {PROBE_ATTEMPTS} probes. Check, in order: the hand is POWERED ON; the "
+                "RS485 A/B wiring; --hand-id; --hand-baud; the port itself. A powered-down hand "
+                "sits open and looks exactly like working teleop that never grips. Pass "
+                "--hand-skip-probe to run anyway.")
+
+    def _probe(self) -> Optional[list[int]]:
+        """Read ANGLE_SET back a few times to prove something is actually on the bus."""
+        if self._ser is None:
+            return None
+        for _ in range(PROBE_ATTEMPTS):
+            vals = self._read_registers(REG_ANGLE_SET, N_DOF, quiet=True)
+            if vals is not None:
+                return vals
+        return None
 
     def _write_registers(self, addr: int, values: Sequence[int]) -> None:
         frame = build_write(self.hand_id, addr, values)
@@ -231,7 +251,7 @@ class InspireHand:
             return
         self._n_write_err = 0
 
-    def _read_registers(self, addr: int, count: int) -> Optional[list[int]]:
+    def _read_registers(self, addr: int, count: int, quiet: bool = False) -> Optional[list[int]]:
         if self._ser is None:
             return None
         self._pending = None  # this exchange clears the buffer, so any pending ack is gone
@@ -241,7 +261,8 @@ class InspireHand:
         try:
             return unpack_int16(parse_read_reply(frame, self.hand_id, count))
         except ValueError as exc:
-            logger.warning("bad reply from hand at register %d: %s", addr, exc)
+            if not quiet:
+                logger.warning("bad reply from hand at register %d: %s", addr, exc)
             return None
 
     # --- commands -------------------------------------------------------------------------

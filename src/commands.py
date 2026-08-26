@@ -214,6 +214,7 @@ def _build_dex_hand(args):
                        speed=args.hand_speed, force=args.hand_force,
                        speed_reg=args.hand_speed_reg, force_reg=args.hand_force_reg,
                        min_interval=(1.0 / rate if rate > 0 else 0.0),
+                       probe=not getattr(args, "hand_skip_probe", False),
                        dry_run=getattr(args, "hand_dry_run", False))
     if not hand.dry_run:
         logger.warning("dex hand LIVE on %s: fingers will move with your hand", hand.port)
@@ -228,7 +229,7 @@ def cmd_hand_test(args) -> int:
 
     hand = InspireHand(port=args.port, baud=args.baud, hand_id=args.id, speed=args.speed,
                        force=args.force, speed_reg=args.speed_reg, force_reg=args.force_reg,
-                       dry_run=args.dry_run)
+                       probe=not args.skip_probe, dry_run=args.dry_run)
     try:
         hand.connect()
         logger.info("opening hand ...")

@@ -256,6 +256,12 @@ work too; if none is usable the writer falls back to OpenCV mp4v and logs a warn
   is cosmetic. Downgrade to `torch 2.5.1+cu118` / `ultralytics 8.1.34` if you want it silent.
 - **`Permission denied: /dev/ttyUSB0`** — add yourself to the `dialout` group
   (`sudo usermod -aG dialout $USER`, then log out and back in).
+- **`no reply from the hand ... after 3 probes`** — the hand is not on the bus. Check the power
+  first: a powered-down hand rests in the open pose and is indistinguishable, from the camera
+  side, from teleop that tracks perfectly and never grips. Then the RS485 A/B wiring, `--hand-id`,
+  `--hand-baud`, and the port. Every command path starts with this probe (a Modbus read, which a
+  live device must answer), so a dead hand stops the run instead of wasting it; `--hand-skip-probe`
+  overrides.
 - **Hand does not respond / `no valid ack from hand`** — check the RS485 A/B polarity, the hand id
   (`--hand-id`, default 1) and the baud (`--hand-baud`, default 115200). The warning carries the
   reason (CRC, wrong id, Modbus exception, or no bytes at all). It is a diagnostic, not a failure:

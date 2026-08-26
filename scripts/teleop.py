@@ -33,6 +33,8 @@ def _add_hand_flags(p: argparse.ArgumentParser) -> None:
     p.add_argument("--hand-calib", default=None,
                    help="finger calibration JSON (default: data/hand_calib.json if present; "
                         "'none' forces the built-in defaults)")
+    p.add_argument("--hand-skip-probe", action="store_true",
+                   help="start even if the hand does not answer (default: refuse, it is powered off)")
     p.add_argument("--hand-dry-run", action="store_true",
                    help="build hand frames without opening the port (no finger motion)")
 
@@ -122,6 +124,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--force-reg", type=int, default=None,
                    help="modbus register of FORCE_SET; --force is skipped without it")
     p.add_argument("--hold", type=float, default=1.0, help="seconds to hold each sweep step")
+    p.add_argument("--skip-probe", action="store_true",
+                   help="sweep even if the hand does not answer the connection probe")
     p.add_argument("--dry-run", action="store_true", help="log frames without opening the port")
     p.set_defaults(func=commands.cmd_hand_test)
 
