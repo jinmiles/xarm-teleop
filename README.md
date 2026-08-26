@@ -30,7 +30,8 @@ interface, so you can validate everything in sim before the arm ever moves.
 - *Optional:* Inspire **RH56** 5-finger hand on RS485 (e.g. `/dev/ttyUSB0`) for per-finger teleop
 
 **Software**
-- Linux, Python **3.10**, conda (or venv)
+- Linux, Python **3.13**, conda (Python 3.9 or older will not work: several dependencies,
+  including mujoco, huggingface_hub and scikit-image, require 3.10+)
 - For MuJoCo offscreen rendering on a headless host: an EGL-capable GL stack (NVIDIA EGL works)
 
 ## 2. Installation
@@ -42,13 +43,13 @@ bash scripts/install_env.sh          # env name: xarm-teleop (pass a name to ove
 conda activate xarm-teleop
 ```
 
-This recipe is validated on a clean Python 3.10 machine. If you prefer to run the steps
+This recipe is validated on a clean Python 3.13 machine. If you prefer to run the steps
 yourself, they are:
 
 ```bash
-conda create -n xarm-teleop python=3.10 -y && conda activate xarm-teleop
-pip install torch==2.1.0 torchvision==0.16.0 --index-url https://download.pytorch.org/whl/cu118
-pip install "numpy==1.26.4"
+conda create -n xarm-teleop python=3.13 pip setuptools -y && conda activate xarm-teleop
+pip install torch==2.7.1 torchvision==0.22.1 --index-url https://download.pytorch.org/whl/cu118
+pip install "numpy==2.2.6"
 pip install --no-build-isolation "chumpy @ git+https://github.com/mattloper/chumpy"
 pip install -r requirements.txt
 pip install --no-deps "git+https://github.com/warmshao/WiLoR-mini"
@@ -56,7 +57,7 @@ pip install --no-deps "git+https://github.com/warmshao/WiLoR-mini"
 
 The order and the two odd-looking steps matter on a fresh machine:
 - **torch first** (from the cu118 index) so nothing pulls a CPU build.
-- **`numpy==1.26.4`** — numpy 2.x breaks chumpy/opencv.
+- **numpy pinned** — install it before chumpy and opencv so everything is built against one ABI.
 - **chumpy with `--no-build-isolation`** — its ancient `setup.py` imports `pip`, which is
   absent inside pip's isolated build env, so an ordinary install fails.
 - **WiLoR-mini with `--no-deps`** — otherwise it rebuilds chumpy from a git URL under isolation
@@ -224,6 +225,9 @@ work too; if none is usable the writer falls back to OpenCV mp4v and logs a warn
 - **`--display` shows nothing** — over SSH you need `ssh -X`/`-Y` (or run on the robot PC's own
   session). Without a usable display the window disables itself with a warning and the run keeps
   going; the mp4 is still written. The MuJoCo offscreen render is separate and unaffected.
+- **`pip check` complains about torch / ultralytics** — WiLoR-mini declares stale bounds
+  (`torch<=2.5`, `ultralytics==8.1.34`). The pinned versions are newer and validated; the warning
+  is cosmetic. Downgrade to `torch 2.5.1+cu118` / `ultralytics 8.1.34` if you want it silent.
 - **`Permission denied: /dev/ttyUSB0`** — add yourself to the `dialout` group
   (`sudo usermod -aG dialout $USER`, then log out and back in).
 - **Hand does not respond / `no ack from hand`** — check the RS485 A/B polarity, the hand id
@@ -242,6 +246,10 @@ work too; if none is usable the writer falls back to OpenCV mp4v and logs a warn
 
 **Verified without hardware:** WiLoR perception, retargeting, MuJoCo sim teleop, safety limits,
 the full control code path (dry-run), and the depth back-projection math.
+
+**Verified without hardware (environment):** the full Python 3.13 / CUDA 11.8 stack above —
+fresh conda env, WiLoR inference on a test image (~50 ms/frame on a 3090), a MuJoCo sim teleop run
+with H.264 recording, and the CPU-only test scripts.
 
 **Verified without hardware (dex hand):** RH56 frame construction against the two golden examples
 in the vendor manual, register round-trip against a fake-serial emulator, and the MANO -> 6-DOF
