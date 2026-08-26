@@ -197,6 +197,7 @@ Read before Step 4. Teleop moves a real arm from your hand motion — treat it l
 | Finger open/closed commands | `src/control/inspire_hand.py` → `CMD_OPEN`, `CMD_CLOSED` | raw device units, verified on hardware |
 | Hand speed / grip force | `--hand-speed`, `--hand-force` + `--hand-speed-reg`, `--hand-force-reg` | skipped unless you supply the registers |
 | Finger command deadband | `src/control/inspire_hand.py` → `min_delta` | anti-jitter, in raw device units |
+| Finger command rate | `--hand-rate` (Hz, default 20) | RS485 is half-duplex: frames need quiet between them |
 
 ## 7. Command reference
 

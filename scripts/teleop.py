@@ -22,6 +22,8 @@ def _add_hand_flags(p: argparse.ArgumentParser) -> None:
                    help="serial port of the Inspire RH56 hand, e.g. /dev/ttyUSB0 (enables it)")
     p.add_argument("--hand-baud", type=int, default=115200, help="hand serial baud (default 115200)")
     p.add_argument("--hand-id", type=int, default=1, help="hand RS485 id (default 1)")
+    p.add_argument("--hand-rate", type=float, default=20.0,
+                   help="max finger command rate in Hz (default 20; RS485 needs quiet between frames)")
     p.add_argument("--hand-speed", type=int, default=500, help="hand SPEED_SET, 0-1000")
     p.add_argument("--hand-force", type=int, default=300, help="hand FORCE_SET grip threshold, 0-1000 g")
     p.add_argument("--hand-speed-reg", type=int, default=None,

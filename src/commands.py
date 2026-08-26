@@ -209,9 +209,11 @@ def _build_dex_hand(args):
         if str(calib_path) != "none":
             logger.warning("no hand calibration at %s; using rough defaults "
                            "(run 'teleop.py hand-calib' for your hand)", calib_path)
+    rate = float(getattr(args, "hand_rate", 0.0) or 0.0)
     hand = InspireHand(port=port or "/dev/ttyUSB0", baud=args.hand_baud, hand_id=args.hand_id,
                        speed=args.hand_speed, force=args.hand_force,
                        speed_reg=args.hand_speed_reg, force_reg=args.hand_force_reg,
+                       min_interval=(1.0 / rate if rate > 0 else 0.0),
                        dry_run=getattr(args, "hand_dry_run", False))
     if not hand.dry_run:
         logger.warning("dex hand LIVE on %s: fingers will move with your hand", hand.port)

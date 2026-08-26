@@ -26,6 +26,7 @@ hand's id or baud rate and take the link down.
 """
 from __future__ import annotations
 
+import time
 from typing import Optional, Sequence
 
 import numpy as np
@@ -131,7 +132,8 @@ class InspireHand:
         port: str = "/dev/ttyUSB0",
         baud: int = 115200,
         hand_id: int = 1,
-        timeout: float = 0.05,
+        timeout: float = 0.15,
+        min_interval: float = 0.05,
         speed: Optional[int] = None,
         force: Optional[int] = None,
         min_delta: int = 4,
@@ -145,7 +147,12 @@ class InspireHand:
         self.port = port
         self.baud = int(baud)
         self.hand_id = int(hand_id)
+        # The ack read returns as soon as its 8 bytes arrive, so a generous timeout costs nothing
+        # while the hand is healthy. Bailing out early is what hurts: this is a half-duplex bus, so
+        # returning before the hand has finished replying lets the next write collide with the tail
+        # of the ack, and the hand drops that command.
         self.timeout = float(timeout)
+        self.min_interval = float(min_interval)  # floor on the gap between frames (bus quiet time)
         self.speed = speed
         self.force = force
         self.min_delta = int(min_delta)  # deadband in raw device units (anti-jitter)
@@ -159,6 +166,7 @@ class InspireHand:
         self.dry_run = bool(dry_run)
         self._ser = None
         self._last: Optional[np.ndarray] = None
+        self._t_last_write: Optional[float] = None
         self._n_writes = 0
         self._n_write_err = 0
 
@@ -194,7 +202,8 @@ class InspireHand:
         self._ser.write(frame)
         self._ser.flush()  # half-duplex RS485: let the frame leave before listening for the ack
         self._n_writes += 1
-        reply = self._ser.read(WRITE_ACK_LEN)  # short timeout keeps the control loop moving
+        reply = self._ser.read(WRITE_ACK_LEN)
+        self._t_last_write = time.perf_counter()
         try:
             parse_write_ack(reply, self.hand_id, addr, len(values))
         except ValueError as exc:
@@ -252,6 +261,9 @@ class InspireHand:
 
     def apply(self, closed: np.ndarray) -> None:
         """Command the hand from closed-ratios in [0,1] (1 = fully bent), one per DOF."""
+        if (self._t_last_write is not None
+                and time.perf_counter() - self._t_last_write < self.min_interval):
+            return  # rate limit: leave the bus quiet; the next tick carries a fresher target
         angles = self.to_command(closed)
         if self._last is not None and np.max(np.abs(angles - self._last)) < self.min_delta:
             return  # deadband: skip a redundant frame (less serial traffic, less finger jitter)
