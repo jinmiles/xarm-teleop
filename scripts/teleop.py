@@ -24,6 +24,10 @@ def _add_hand_flags(p: argparse.ArgumentParser) -> None:
     p.add_argument("--hand-id", type=int, default=1, help="hand RS485 id (default 1)")
     p.add_argument("--hand-speed", type=int, default=500, help="hand SPEED_SET, 0-1000")
     p.add_argument("--hand-force", type=int, default=300, help="hand FORCE_SET grip threshold, 0-1000 g")
+    p.add_argument("--hand-speed-reg", type=int, default=None,
+                   help="modbus register of SPEED_SET; --hand-speed is skipped without it")
+    p.add_argument("--hand-force-reg", type=int, default=None,
+                   help="modbus register of FORCE_SET; --hand-force is skipped without it")
     p.add_argument("--hand-calib", default=None,
                    help="finger calibration JSON (default: data/hand_calib.json if present)")
     p.add_argument("--hand-dry-run", action="store_true",
@@ -106,6 +110,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--id", type=int, default=1, help="hand RS485 id (default 1)")
     p.add_argument("--speed", type=int, default=300, help="SPEED_SET for the sweep, 0-1000")
     p.add_argument("--force", type=int, default=300, help="FORCE_SET during the sweep, 0-1000 g")
+    p.add_argument("--speed-reg", type=int, default=None,
+                   help="modbus register of SPEED_SET; --speed is skipped without it")
+    p.add_argument("--force-reg", type=int, default=None,
+                   help="modbus register of FORCE_SET; --force is skipped without it")
     p.add_argument("--hold", type=float, default=1.0, help="seconds to hold each sweep step")
     p.add_argument("--dry-run", action="store_true", help="log frames without opening the port")
     p.set_defaults(func=commands.cmd_hand_test)

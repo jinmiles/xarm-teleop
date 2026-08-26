@@ -98,10 +98,15 @@ Enable the controller for remote motion (UFACTORY Studio → in remote/idle stat
 ls -l /dev/ttyUSB0                 # must exist; add yourself to the dialout group for access
 python scripts/teleop.py hand-test --port /dev/ttyUSB0     # sweeps each DOF, one at a time
 ```
-The 6 DOF are `[little, ring, middle, index, thumb_bend, thumb_rot]` and the vendor scale is
-`1000 = fully open, 0 = fully bent`. Watch the sweep and confirm each named DOF moves the finger
-it claims before going further. Without `--hand-port`, everything below runs the 2-finger gripper
-path exactly as before.
+The hand speaks **Modbus RTU** (slave id 1), *not* the `EB 90` framing in the RH56 manual: the
+6 DOF are written as big-endian int16 to holding registers `1040..1045` in the order
+`[little, ring, middle, index, thumb_bend, thumb_rot]`. Commands are raw device units, not the
+manual's 0–1000 scale — the driver interpolates between the two hardware-verified poses in
+`src/control/inspire_hand.py` (`CMD_OPEN` / `CMD_CLOSED`) and clamps to the envelope they span, so
+the four fingers and the thumb bend close by *decreasing* while thumb rotation opposes by
+*increasing*. `CMD_CLOSED` is a deliberate light grip; widen it only after checking the real end
+stops. Watch the sweep and confirm each named DOF moves the finger it claims before going further.
+Without `--hand-port`, everything below runs the 2-finger gripper path exactly as before.
 
 ## 4. Run it on your D435 + xArm7
 
@@ -166,9 +171,11 @@ Read before Step 4. Teleop moves a real arm from your hand motion — treat it l
 - **Clear the area** around the robot and keep the deadman/clutch in mind: control engages on the
   first tracked frame and re-indexes after a tracking loss.
 - **Dexterous hand**: `--hand-port` moves real fingers even when the arm is in dry-run. Bench-test
-  with `hand-test` first, keep `--hand-force` low (default 300 g) while tuning, and remember the
-  hand *holds its last position* when tracking is lost — it will not drop a grasped object, but it
-  will not open either.
+  with `hand-test` first. Grip force is **not** limited by default — `--hand-force` is only written
+  if you also pass `--hand-force-reg`, since FORCE_SET's register is unconfirmed on this hand — so
+  the travel limit is `CMD_CLOSED` in `src/control/inspire_hand.py`, which stops at a light grip.
+  Remember the hand *holds its last position* when tracking is lost — it will not drop a grasped
+  object, but it will not open either.
 
 ## 6. Configuration & tuning
 
@@ -182,8 +189,9 @@ Read before Step 4. Teleop moves a real arm from your hand motion — treat it l
 | Gripper range/direction | `src/control/xarm_controller.py` → `GRIPPER_MAX`, `servo_to` | verify on hardware |
 | Smoothing | `--min-cutoff`, `--beta` (One-Euro) | lower cutoff = smoother, more lag |
 | Finger open/closed range | `data/hand_calib.json` via `hand-calib` | per operator; defaults are rough |
-| Hand speed / grip force | `--hand-speed`, `--hand-force` (0-1000) | written to SPEED_SET / FORCE_SET |
-| Finger command deadband | `src/control/inspire_hand.py` → `min_delta` | anti-jitter on the 0-1000 scale |
+| Finger open/closed commands | `src/control/inspire_hand.py` → `CMD_OPEN`, `CMD_CLOSED` | raw device units, verified on hardware |
+| Hand speed / grip force | `--hand-speed`, `--hand-force` + `--hand-speed-reg`, `--hand-force-reg` | skipped unless you supply the registers |
+| Finger command deadband | `src/control/inspire_hand.py` → `min_delta` | anti-jitter, in raw device units |
 
 ## 7. Command reference
 
@@ -200,8 +208,8 @@ Common flags: `--scale`, `--depth-scale`, `--pos-only`, `--primary auto|left|rig
 `--min-cutoff`, `--beta`, `--proc-max-side` (downscale before inference), `--device`, `--record`,
 `--display` (live window on `live`/`sim`/`teleop`; Esc or `q` ends the run cleanly).
 Dexterous-hand flags on `sim`/`teleop`: `--hand-port` (enables the RH56), `--hand-baud`,
-`--hand-id`, `--hand-speed`, `--hand-force`, `--hand-calib`, `--hand-dry-run` (build frames
-without opening the port).
+`--hand-id`, `--hand-speed`, `--hand-force`, `--hand-speed-reg`, `--hand-force-reg`,
+`--hand-calib`, `--hand-dry-run` (build frames without opening the port).
 Outputs are H.264 mp4 (playable in VSCode/browser). The H.264 encoder is probed from the local
 ffmpeg build at runtime (`libx264` -> `h264_nvenc` -> `libopenh264`), so LGPL builds without x264
 work too; if none is usable the writer falls back to OpenCV mp4v and logs a warning.
@@ -230,15 +238,17 @@ work too; if none is usable the writer falls back to OpenCV mp4v and logs a warn
   is cosmetic. Downgrade to `torch 2.5.1+cu118` / `ultralytics 8.1.34` if you want it silent.
 - **`Permission denied: /dev/ttyUSB0`** — add yourself to the `dialout` group
   (`sudo usermod -aG dialout $USER`, then log out and back in).
-- **Hand does not respond / `no ack from hand`** — check the RS485 A/B polarity, the hand id
-  (`--hand-id`, default 1) and the baud (`--hand-baud`, default 115200). `hand-test --dry-run`
-  prints the frames without a port so you can confirm the CLI side independently.
+- **Hand does not respond / `no valid ack from hand`** — check the RS485 A/B polarity, the hand id
+  (`--hand-id`, default 1) and the baud (`--hand-baud`, default 115200). The warning carries the
+  reason (CRC, wrong id, Modbus exception, or no bytes at all). `hand-test --dry-run` prints the
+  frames without a port so you can confirm the CLI side independently.
 - **Wrong finger moves** — the DOF order is fixed by the vendor as
   `[little, ring, middle, index, thumb_bend, thumb_rot]`; if your unit differs, remap in
   `InspireHand.apply`. Run `hand-test` to see which physical finger each index drives.
-- **Fingers barely move / slam shut** — recalibrate (`hand-calib`): a small open/closed span in
-  `data/hand_calib.json` means the captured poses were too similar. The command warns per DOF when
-  the span is under 0.15 rad.
+- **Fingers barely move / slam shut** — first recalibrate (`hand-calib`): a small open/closed span
+  in `data/hand_calib.json` means the captured poses were too similar, and the command warns per
+  DOF when the span is under 0.15 rad. If the ratios look right but the travel does not, widen
+  `CMD_OPEN` / `CMD_CLOSED` in `src/control/inspire_hand.py` — the defaults stop at a light grip.
 - **Slow inference (<20 fps)** — expected on eager PyTorch (~50 ms/frame single hand on a 3090);
   the control loop is decoupled from perception. See `docs/PLAN.md` for the optimization path.
 
@@ -251,13 +261,15 @@ the full control code path (dry-run), and the depth back-projection math.
 fresh conda env, WiLoR inference on a test image (~50 ms/frame on a 3090), a MuJoCo sim teleop run
 with H.264 recording, and the CPU-only test scripts.
 
-**Verified without hardware (dex hand):** RH56 frame construction against the two golden examples
-in the vendor manual, register round-trip against a fake-serial emulator, and the MANO -> 6-DOF
-finger retargeting on synthetic open/half/fist skeletons.
+**Verified without hardware (dex hand):** RH56 Modbus RTU frame construction byte-for-byte against
+a bench script confirmed on an RH56F1, reply/exception validation and a register round-trip against
+a fake-serial emulator, and the MANO -> 6-DOF finger retargeting on synthetic open/half/fist
+skeletons.
 
 **Needs on-hardware verification (first bring-up):** D435 live streaming; xArm7 motion, gripper
 direction, and axis-angle pose convention; end-to-end latency; RH56 serial link, DOF order,
-angle direction, and thumb-rotation sense.
+angle direction, thumb-rotation sense, the usable end stops beyond the light-grip default, and the
+register addresses for SPEED_SET / FORCE_SET / actual angle (only ANGLE_SET is confirmed).
 
 ## 10. Project layout
 

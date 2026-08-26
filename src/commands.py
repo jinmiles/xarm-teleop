@@ -188,6 +188,7 @@ def _build_dex_hand(args):
                        "(run 'teleop.py hand-calib' for your hand)", calib_path)
     hand = InspireHand(port=port or "/dev/ttyUSB0", baud=args.hand_baud, hand_id=args.hand_id,
                        speed=args.hand_speed, force=args.hand_force,
+                       speed_reg=args.hand_speed_reg, force_reg=args.hand_force_reg,
                        dry_run=getattr(args, "hand_dry_run", False))
     if not hand.dry_run:
         logger.warning("dex hand LIVE on %s: fingers will move with your hand", hand.port)
@@ -201,30 +202,28 @@ def cmd_hand_test(args) -> int:
     from .control.inspire_hand import DOF_NAMES, InspireHand
 
     hand = InspireHand(port=args.port, baud=args.baud, hand_id=args.id, speed=args.speed,
-                       force=args.force, dry_run=args.dry_run)
+                       force=args.force, speed_reg=args.speed_reg, force_reg=args.force_reg,
+                       dry_run=args.dry_run)
     try:
         hand.connect()
-        for name, values in (("angle", hand.read_angles()), ("force", hand.read_forces()),
-                             ("error", hand.read_errors()), ("status", hand.read_status()),
-                             ("temp(C)", hand.read_temperature())):
-            if values is not None:
-                logger.info("%-8s %s", name, ", ".join(f"{n}={v}" for n, v in zip(DOF_NAMES, values)))
         logger.info("opening hand ...")
         hand.open_hand()
         _time.sleep(args.hold)
         for i, name in enumerate(DOF_NAMES):
             logger.info("[%d/%d] bending %s (others stay open)", i + 1, len(DOF_NAMES), name)
-            angles = [1000] * len(DOF_NAMES)
-            angles[i] = 0
+            angles = hand.open_cmd.copy()
+            angles[i] = hand.closed_cmd[i]
             hand.set_angles(angles)
             _time.sleep(args.hold)
-            back = hand.read_angles()
+            back = hand.read_angle_set()
             if back is not None:
-                logger.info("      readback %s", ", ".join(f"{n}={v}" for n, v in zip(DOF_NAMES, back)))
+                logger.info("      setpoint readback %s",
+                            ", ".join(f"{n}={v}" for n, v in zip(DOF_NAMES, back)))
             hand.open_hand()
             _time.sleep(args.hold)
-        logger.info("sweep done. Confirm each named DOF moved the finger it claims, and that "
-                    "0 = bent / 1000 = open on your hand.")
+        logger.info("sweep done. Confirm each named DOF moved the finger it claims, and that the "
+                    "bent pose really is a light grip (open %s -> closed %s in device units).",
+                    hand.open_cmd.tolist(), hand.closed_cmd.tolist())
     finally:
         hand.close()
     return 0
