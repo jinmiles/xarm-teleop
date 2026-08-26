@@ -184,7 +184,12 @@ def _build_dex_hand(args):
     port = getattr(args, "hand_port", None)
     if not port and not getattr(args, "hand_dry_run", False):
         return None, None
-    calib_path = Path(args.hand_calib) if args.hand_calib else paths.HAND_CALIB
+    if str(getattr(args, "hand_calib", "") or "").lower() == "none":
+        # escape hatch: rules the calibration out as the cause in one run, no recapture needed
+        logger.info("dex hand calibration disabled: using the built-in defaults")
+        calib_path = Path("none")
+    else:
+        calib_path = Path(args.hand_calib) if args.hand_calib else paths.HAND_CALIB
     if calib_path.exists():
         from .retarget.dex_hand import DOF_NAMES as _DEX_NAMES
 
@@ -201,8 +206,9 @@ def _build_dex_hand(args):
                            ", ".join(narrow))
     else:
         calib = None
-        logger.warning("no hand calibration at %s; using rough defaults "
-                       "(run 'teleop.py hand-calib' for your hand)", calib_path)
+        if str(calib_path) != "none":
+            logger.warning("no hand calibration at %s; using rough defaults "
+                           "(run 'teleop.py hand-calib' for your hand)", calib_path)
     hand = InspireHand(port=port or "/dev/ttyUSB0", baud=args.hand_baud, hand_id=args.hand_id,
                        speed=args.hand_speed, force=args.hand_force,
                        speed_reg=args.hand_speed_reg, force_reg=args.hand_force_reg,

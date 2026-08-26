@@ -262,11 +262,13 @@ work too; if none is usable the writer falls back to OpenCV mp4v and logs a warn
 - **Wrong finger moves** — the DOF order is fixed by the vendor as
   `[little, ring, middle, index, thumb_bend, thumb_rot]`; if your unit differs, remap in
   `InspireHand.apply`. Run `hand-test` to see which physical finger each index drives.
-- **Fingers do not move at all** — the run summary line (`inspire hand closed: ... N frames
-  written, M unacked`) separates the two causes. `N` near zero means the retargeting never changed
-  the command: check the `open->fist span` logged at startup and re-run `hand-calib` if a DOF is
-  flagged as tiny. `N` large with `M` just as large means the link is the problem: the hand should
-  visibly open the moment teleop starts, and if it does not, go back to `hand-test`.
+- **Fingers do not move / the hand stays open** — the hand opens once at startup, so if that
+  much happens the serial link is fine and the finger *targets* are the problem. The run logs
+  `dex ratio range: little=0.00-0.00, ...` every 150 tracked frames and at exit: a range stuck at
+  one value means the calibration saturates, i.e. `ratio()` clips to a constant and the deadband
+  suppresses every frame. Confirm with `--hand-calib none` (built-in defaults, no recapture) and
+  then re-run `hand-calib`. If instead the hand never opens at startup, the link is the problem:
+  go back to `hand-test`, and check `inspire hand closed: ... N frames written, M unacked`.
 - **Only the thumb rotates the wrong way** — the palm-normal sign comes from the detector's
   handedness. Pass `--primary right` (the default) or `--primary left` to state which hand you
   teleop with instead of letting the detector decide.

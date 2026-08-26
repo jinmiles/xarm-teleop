@@ -29,7 +29,8 @@ def _add_hand_flags(p: argparse.ArgumentParser) -> None:
     p.add_argument("--hand-force-reg", type=int, default=None,
                    help="modbus register of FORCE_SET; --hand-force is skipped without it")
     p.add_argument("--hand-calib", default=None,
-                   help="finger calibration JSON (default: data/hand_calib.json if present)")
+                   help="finger calibration JSON (default: data/hand_calib.json if present; "
+                        "'none' forces the built-in defaults)")
     p.add_argument("--hand-dry-run", action="store_true",
                    help="build hand frames without opening the port (no finger motion)")
 

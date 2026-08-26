@@ -42,6 +42,10 @@ def _status_panel(size: tuple[int, int], lines: list[str]) -> np.ndarray:
     return panel
 
 
+def _dex_range(lo: np.ndarray, hi: np.ndarray) -> str:
+    return ", ".join(f"{n}={a:.2f}-{b:.2f}" for n, a, b in zip(DEX_DOF_NAMES, lo, hi))
+
+
 def run_teleop(
     backend: RobotBackend,
     source: str | int,
@@ -71,6 +75,11 @@ def run_teleop(
 
     writer: Optional[VideoWriter] = None
     dex_targets: Optional[np.ndarray] = None
+    # Per-DOF span of the closed-ratios actually commanded. A range stuck at a single value means
+    # the calibration saturates and no finger frame ever changes -- indistinguishable, from the
+    # outside, from a dead serial link.
+    dex_lo: Optional[np.ndarray] = None
+    dex_hi: Optional[np.ndarray] = None
     window = PreviewWindow(f"xarm-teleop | {type(backend).__name__}", enabled=display)
     track_err: list[float] = []
     n_frames = n_tracked = 0
@@ -108,6 +117,10 @@ def run_teleop(
                         # single-scalar pinch mapping used by the 2-finger gripper
                         dex_targets = dex_retarget.targets(prim, frame.timestamp)
                         dex_hand.apply(dex_targets)
+                        dex_lo = dex_targets if dex_lo is None else np.minimum(dex_lo, dex_targets)
+                        dex_hi = dex_targets if dex_hi is None else np.maximum(dex_hi, dex_targets)
+                        if n_tracked % 150 == 0:
+                            logger.info("dex ratio range so far: %s", _dex_range(dex_lo, dex_hi))
                     reached, _ = backend.tcp_pose()
                     track_err.append(float(np.linalg.norm(safe_pos - reached)))
                 else:
@@ -161,6 +174,11 @@ def run_teleop(
             dex_hand.close()
         backend.close()
     wall = time.perf_counter() - t0
+    if dex_lo is not None:
+        logger.info("dex ratio range: %s", _dex_range(dex_lo, dex_hi))
+        if float(np.max(dex_hi - dex_lo)) < 0.1:
+            logger.warning("finger targets never moved: the calibration saturates every DOF, so "
+                           "the hand held one pose. Re-run 'teleop.py hand-calib'")
 
     stats = {
         "frames": n_frames,
