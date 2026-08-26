@@ -227,12 +227,19 @@ work too; if none is usable the writer falls back to OpenCV mp4v and logs a warn
   webcam/video the wrist is monocular (up-to-scale), which is why sim/video use `--scale 3`.
 - **xArm won't connect** — `ping` the IP; clear errors in UFACTORY Studio; check firmware; the
   controller must not be in an error/estop state.
-- **`set_servo_cartesian_aa -> code=1` / `xarm has error, error=19`** — the arm has latched *End
-  Effector Communication Error*: it is trying to reach a UFACTORY gripper that is not on the
-  flange. Run the 5-finger setup with `--hand-port` (which implies `--no-gripper`), clear the
-  error in UFACTORY Studio, and restart. Once any error is latched the arm silently ignores every
-  servo command while the hand keeps moving, which looks like an arm-only failure; the loop now
-  reports the controller error and the fix instead of letting the SDK spam.
+- **`ControllerError, code: 19` / `set_servo_cartesian_aa -> code=1`** — *End Effector
+  Communication Error*: something is talking to a UFACTORY gripper that is not on the flange.
+  Two independent sources, fix both:
+  1. **This code** — run with `--hand-port` (implies `--no-gripper`). The SDK's `set_gripper_*`
+     calls first write the gripper baud rate onto the tool RS485 bus, and that write is what
+     raises the error, so `baud_checkset` is disabled too when no gripper is configured.
+  2. **The controller** — in UFACTORY Studio, uninstall the end effector (*Settings → End
+     Effector / gripper → none*). While it is configured as installed, the controller keeps
+     polling the tool bus and re-latches the error no matter what this code does.
+
+  Then clear the error in Studio and restart. Once an error is latched the arm ignores every servo
+  command while the hand keeps moving, which looks like an arm-only failure — `connect()` now
+  aborts instead of limping into that state.
 - **Gripper opens when it should close** — flip the gripper mapping in `XArm7Controller.servo_to`.
 - **Arm overshoots / lags** — lower `--tcp-speed` and `max_step_m`, or raise One-Euro smoothing.
 - **Orientation off** — the controller uses the axis-angle servo (`set_servo_cartesian_aa`);

@@ -35,8 +35,9 @@ GRIPPER_MAX = 850  # UFACTORY gripper: 0 = closed, 850 = open (verify direction 
 
 # Controller errors this loop can actually cause, with the fix rather than the vendor wording.
 ERROR_HINTS = {
-    19: "end effector communication failed -- the UFACTORY gripper is not on the flange; "
-        "run with --no-gripper (implied by --hand-port) and clear the error",
+    19: "end effector communication failed -- nothing answers on the tool RS485 bus. Run with "
+        "--no-gripper (implied by --hand-port), and in UFACTORY Studio uninstall the end effector "
+        "so the controller stops polling for it",
     21: "kinematic error -- the target is unreachable; lower --scale or shrink DEFAULT_WORKSPACE",
     22: "self-collision -- re-home the arm and shrink DEFAULT_WORKSPACE",
     24: "speed limit exceeded -- lower --tcp-speed and --max-step-m",
@@ -71,10 +72,16 @@ class XArm7Controller:
         from xarm.wrapper import XArmAPI
 
         logger.info("connecting to xArm7 at %s ...", self.ip)
-        self.arm = XArmAPI(self.ip, is_radian=True)
+        # baud_checkset makes the SDK write the gripper's baud rate onto the tool RS485 bus before
+        # any gripper call; with nothing on the flange that write is what raises error 19.
+        self.arm = XArmAPI(self.ip, is_radian=True, baud_checkset=self.use_gripper)
         self.arm.clean_error()
         self.arm.clean_warn()
         self.arm.motion_enable(True)
+        if self.arm.error_code:
+            raise RuntimeError(
+                f"xArm still reports controller error {self.arm.error_code} after clean_error: "
+                + ERROR_HINTS.get(self.arm.error_code, "clear it in UFACTORY Studio and retry"))
         self.arm.set_collision_sensitivity(self.collision_sensitivity)
         if self.use_gripper:
             self.arm.set_gripper_enable(True)
