@@ -107,20 +107,43 @@ Confirm each named DOF moves the finger it claims.
 
 ### 2.1 The glove and the Windows laptop (method 2 only)
 
-You need the Noitom gloves and their hub, the Windows laptop Axis Studio is licensed on, and an
-ethernet cable between that laptop and this PC. Skip this whole section for method 1.
+You need the Noitom gloves and their hub, the Windows laptop Axis Studio is licensed on, and a
+network path from that laptop to the PC that runs teleop. Skip this whole section for method 1.
 
-**a. Wire the two machines.** A direct cable is enough — no switch, no router, no DHCP — as long
-as both ends have a static address on the same subnet. The addresses below are the ones used in
-the rest of this section; any private subnet works.
+**a. Put both machines on the network.** They do not have to share a subnet — they only have to
+reach each other. The **destination is whichever PC runs `teleop.py`**: the glove stream lands
+there, so that machine is the one that needs this repo, the conda env, the D435 and the RH56.
 
-- *Windows*: Settings → Network & Internet → Ethernet → IP assignment → Edit → Manual, IPv4
-  on, IP `192.168.2.16`, mask `255.255.255.0`, gateway blank.
-- *Here*: `sudo ip link set <iface> up && sudo ip addr add 192.168.2.15/24 dev <iface>`
-  (`ip -br link` lists the interfaces), or set the same statically in NetworkManager so it
-  survives a reboot.
-- Check it both ways: `ping 192.168.2.15` from Windows, `ping 192.168.2.16` from here. Answer any
-  Windows firewall prompt with **allow on private networks**.
+| Axis Studio field | machine | this rig | role |
+|---|---|---|---|
+| *Local Address* | Windows laptop (Wi-Fi) | `192.168.0.46`, port `7001` | runs Axis Studio, sends |
+| *Destination Address* | Ubuntu teleop PC | `10.20.26.115`, port `7012` | runs `teleop.py`, receives |
+
+Substitute your own addresses:
+
+```cmd
+:: Windows — the Wi-Fi adapter's IPv4, and which address actually reaches the destination
+ipconfig | findstr /i "IPv4"
+powershell -c "Find-NetRoute -RemoteIPAddress 10.20.26.115"    :: its IPAddress = Local Address
+```
+
+```bash
+# the teleop PC — its own LAN address
+hostname -I | awk '{print $1}'
+ip -4 -br addr show scope global | grep -vE "docker|br-|virbr|tailscale"
+```
+
+Skip `127.0.0.1`, virtual adapters (`vEthernet`, VirtualBox, `docker0`, `br-*`, `virbr0`) and
+Tailscale `100.x` — they are not addresses the other machine can reach. Then confirm the path
+exists: `ping 10.20.26.115` from Windows. Answer any Windows firewall prompt with **allow on
+private networks**.
+
+Wi-Fi carries the stream fine, but a congested link shows up as `glove frames are older than
+0.30s` warnings and held frames; move the laptop to a cable, or raise `--glove-timeout`, if that
+starts happening. If the network blocks UDP between the two subnets (§6), fall back to a direct
+cable: static `192.168.2.16` on Windows and
+`sudo ip addr add 192.168.2.15/24 dev <iface>` on the teleop PC, then use those two addresses
+instead.
 
 **b. Axis Studio.** Install it on the Windows laptop with its licence dongle plugged in, power up
 the glove hub, pair the gloves, and set **Settings → Working Mode** to the **Hand** mode so the
@@ -140,11 +163,13 @@ sees a skeleton it cannot read:
 | BVH Format → Displacement | **checked** — this is what carries the bone lengths |
 | Coordinate system | `OPT` |
 | Protocol | `UDP` |
-| Local Address | the Windows LAN address (`192.168.2.16`), port `7001` |
-| Destination Address | **this PC's** LAN address (`192.168.2.15`), port `7012` |
+| Local Address | the Windows address from step **a** (`192.168.0.46`), port `7001` |
+| Destination Address | the **teleop PC's** address (`10.20.26.115`), port `7012` |
 
-Loopback addresses (`127.0.0.1`) never work — the destination must be the address this PC answers
-`ping` on. Press OK; broadcasting starts immediately and keeps running while Axis Studio is open.
+Loopback addresses (`127.0.0.1`) never work — the destination must be the address the teleop PC
+answers `ping` on. Press OK; broadcasting starts immediately and keeps running while Axis Studio
+is open. The `+` next to *Destination Address* adds more receivers, so one glove can feed a
+development box and the robot PC at once — both on port `7012`.
 
 *Displacement* is the one setting people leave off. Without it the stream carries rotations but no
 bone lengths, and the receiver falls back to a nominal hand skeleton (it says so in a warning),
@@ -154,11 +179,16 @@ which makes every finger angle approximate.
 `--glove-host 192.168.2.16 --glove-port <that port>`; this PC then connects to Axis Studio instead
 of listening for its broadcast.
 
-**d. Prove the link** before a camera, an arm or the hand is in the picture:
+**d. Prove the link** before a camera, an arm or the hand is in the picture. Both commands run on
+the teleop PC, with Axis Studio broadcasting:
 
 ```bash
-python scripts/teleop.py glove-test              # Ctrl+C to stop
+sudo tcpdump -i any -n udp port 7012             # packets arriving at all? Ctrl+C to stop
+python scripts/teleop.py glove-test              # the pipeline reading them; Ctrl+C to stop
 ```
+
+`tcpdump` separates a network problem from a parsing one: silence there is addresses or
+firewalls (§6), traffic there with nothing in `glove-test` is the working mode or the hand.
 
 It refuses to start unless a frame actually arrives, then logs the six raw finger angles (and,
 once calibrated, the 0-1 ratios) a few times a second. Curl each finger in turn and watch its own
@@ -275,9 +305,14 @@ deadband in `src/control/inspire_hand.py` (`CMD_OPEN`/`CMD_CLOSED`, `min_delta`)
   underestimates the curl of a clenched fist, so the closed capture must come from WiLoR's own
   estimate, not from an assumed anatomical angle.
 - **`no glove data on udp :7012 after 5s`** — Axis Studio is not reaching this PC. Check BVH
-  Broadcasting is enabled with *Destination* = this PC's LAN address and port `7012` (not a
-  loopback address), that the cable link is up (`ping` both ways), and that the Windows firewall
-  is not blocking the outbound stream. `--glove-port` must match the Destination port.
+  Broadcasting is enabled with *Destination* = **this** PC's address and port `7012` (not a
+  loopback address, and not the laptop's own address), that `ping` works from the Windows side,
+  and that the Windows firewall is not blocking the outbound stream. `--glove-port` must match the
+  Destination port. Teleop must run on the machine named in *Destination*.
+- **`ping` works but `tcpdump` shows no UDP** — something forwards ICMP and drops the stream, in
+  this order of likelihood: the Windows firewall (allow Axis Studio outbound on private networks),
+  `ufw` here (`sudo ufw allow from <windows subnet> to any port 7012 proto udp`), then a router
+  policy between the two subnets — which a direct cable (§2.1 a) sidesteps entirely.
 - **Glove connects but no bones arrive** — the stream carries the other hand, or Axis Studio is
   not in a hand/glove working mode. Pass `--glove-hand left|right`; `glove-test` lists any bones
   missing from the stream at startup.

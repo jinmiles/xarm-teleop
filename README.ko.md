@@ -102,20 +102,40 @@ python scripts/teleop.py hand-test --port /dev/ttyUSB0
 
 ### 2.1 장갑과 윈도우 노트북 (2번 방법 전용)
 
-Noitom 장갑과 허브, Axis Studio 라이선스가 있는 윈도우 노트북, 그리고 그 노트북과 이 PC를 잇는 랜선이
-필요합니다. 1번 방법만 쓸 거면 이 절 전체를 건너뛰세요.
+Noitom 장갑과 허브, Axis Studio 라이선스가 있는 윈도우 노트북, 그리고 그 노트북에서 텔레옵 PC까지
+닿는 네트워크 경로가 필요합니다. 1번 방법만 쓸 거면 이 절 전체를 건너뛰세요.
 
-**a. 두 대를 랜선으로 연결.** 스위치·공유기·DHCP 없이 직결 케이블이면 충분합니다. 단, 양쪽 모두 같은
-서브넷의 고정 IP를 가져야 합니다. 아래 주소는 이 절에서 계속 쓰는 예시이며, 사설 대역이면 무엇이든
-됩니다.
+**a. 두 대를 네트워크에 올리기.** 같은 서브넷일 필요는 없고, 서로 닿기만 하면 됩니다.
+**Destination은 `teleop.py`를 돌릴 PC**입니다. 장갑 스트림이 그리로 가므로, 그 머신에 이 repo,
+conda 환경, D435, RH56이 있어야 합니다.
 
-- *윈도우*: 설정 → 네트워크 및 인터넷 → 이더넷 → IP 할당 → 편집 → 수동, IPv4 켬,
-  IP `192.168.2.16`, 서브넷 마스크 `255.255.255.0`, 게이트웨이는 비움.
-- *이 PC*: `sudo ip link set <iface> up && sudo ip addr add 192.168.2.15/24 dev <iface>`
-  (`ip -br link`로 인터페이스 확인). 재부팅 후에도 유지하려면 NetworkManager에서 같은 값을 고정으로
-  설정하세요.
-- 양방향으로 확인: 윈도우에서 `ping 192.168.2.15`, 여기서 `ping 192.168.2.16`. 윈도우 방화벽 창이
-  뜨면 **개인 네트워크에서 허용**을 선택합니다.
+| Axis Studio 항목 | 머신 | 이 장비 기준 | 역할 |
+|---|---|---|---|
+| *Local Address* | 윈도우 노트북 (Wi-Fi) | `192.168.0.46`, 포트 `7001` | Axis Studio 실행, 송신 |
+| *Destination Address* | 우분투 텔레옵 PC | `10.20.26.115`, 포트 `7012` | `teleop.py` 실행, 수신 |
+
+주소를 직접 확인하려면:
+
+```cmd
+:: 윈도우 — Wi-Fi 어댑터의 IPv4, 그리고 목적지로 실제 나가는 주소
+ipconfig | findstr /i "IPv4"
+powershell -c "Find-NetRoute -RemoteIPAddress 10.20.26.115"    :: IPAddress 값이 Local Address
+```
+
+```bash
+# 텔레옵 PC — 자기 LAN 주소
+hostname -I | awk '{print $1}'
+ip -4 -br addr show scope global | grep -vE "docker|br-|virbr|tailscale"
+```
+
+`127.0.0.1`, 가상 어댑터(`vEthernet`, VirtualBox, `docker0`, `br-*`, `virbr0`), Tailscale `100.x`는
+제외하세요 — 상대 머신이 닿을 수 있는 주소가 아닙니다. 그다음 경로가 살아 있는지 확인:
+윈도우에서 `ping 10.20.26.115`. 윈도우 방화벽 창이 뜨면 **개인 네트워크에서 허용**을 선택합니다.
+
+Wi-Fi로도 스트림은 잘 옵니다. 다만 링크가 혼잡하면 `glove frames are older than 0.30s` 경고와 함께
+프레임이 hold 됩니다. 그러면 노트북을 랜선으로 옮기거나 `--glove-timeout`을 올리세요. 두 서브넷 사이에서
+UDP가 막히는 경우(§6)에는 랜선 직결로 우회합니다 — 윈도우에 고정 `192.168.2.16`,
+텔레옵 PC에 `sudo ip addr add 192.168.2.15/24 dev <iface>`를 주고 그 두 주소를 쓰면 됩니다.
 
 **b. Axis Studio.** 라이선스 동글을 꽂은 상태로 윈도우 노트북에 설치하고, 장갑 허브 전원을 켜고 장갑을
 페어링한 뒤, **Settings → Working Mode**를 **Hand** 모드로 둡니다(그래야 스트림에 손가락 본이
@@ -134,11 +154,13 @@ Noitom 장갑과 허브, Axis Studio 라이선스가 있는 윈도우 노트북,
 | BVH Format → Displacement | **체크** — 본 길이가 이 옵션으로 실려 옵니다 |
 | Coordinate system | `OPT` |
 | Protocol | `UDP` |
-| Local Address | 윈도우 LAN 주소(`192.168.2.16`), 포트 `7001` |
-| Destination Address | **이 PC**의 LAN 주소(`192.168.2.15`), 포트 `7012` |
+| Local Address | **a**에서 확인한 윈도우 주소(`192.168.0.46`), 포트 `7001` |
+| Destination Address | **텔레옵 PC**의 주소(`10.20.26.115`), 포트 `7012` |
 
-루프백 주소(`127.0.0.1`)는 절대 동작하지 않습니다. Destination은 이 PC가 `ping`에 응답하는 그
+루프백 주소(`127.0.0.1`)는 절대 동작하지 않습니다. Destination은 텔레옵 PC가 `ping`에 응답하는 그
 주소여야 합니다. OK를 누르면 즉시 송출이 시작되고 Axis Studio가 켜져 있는 동안 유지됩니다.
+*Destination Address* 옆 `+` 버튼으로 수신처를 더 추가할 수 있어서, 장갑 하나로 개발용 PC와 로봇 PC에
+동시에 보낼 수 있습니다(둘 다 포트 `7012`).
 
 *Displacement*가 사람들이 가장 자주 빠뜨리는 설정입니다. 끄면 회전은 오지만 본 길이가 오지 않고,
 수신 측이 표준 손 스켈레톤으로 폴백합니다(경고 로그로 알려줍니다). 그러면 손가락 각도가 근사값이
@@ -148,11 +170,16 @@ Noitom 장갑과 허브, Axis Studio 라이선스가 있는 윈도우 노트북,
 `--glove-host 192.168.2.16 --glove-port <해당 포트>`로 실행하면, 이 PC가 브로드캐스트를 기다리는
 대신 Axis Studio에 접속합니다.
 
-**d. 링크부터 확인하세요** — 카메라·팔·핸드가 개입하기 전에:
+**d. 링크부터 확인하세요** — 카메라·팔·핸드가 개입하기 전에. 두 명령 모두 Axis Studio가 송출 중인
+상태에서, **텔레옵 PC**에서 실행합니다:
 
 ```bash
-python scripts/teleop.py glove-test              # Ctrl+C로 종료
+sudo tcpdump -i any -n udp port 7012             # 패킷이 오기는 하는지; Ctrl+C로 종료
+python scripts/teleop.py glove-test              # 파이프라인이 읽는지; Ctrl+C로 종료
 ```
+
+`tcpdump`가 네트워크 문제와 파싱 문제를 갈라줍니다. 여기가 조용하면 주소나 방화벽 문제(§6),
+여기는 찍히는데 `glove-test`가 조용하면 워킹 모드나 손 선택 문제입니다.
 
 프레임이 실제로 도착하지 않으면 시작을 거부하고, 도착하면 6개 DOF의 raw 각도(캘리브레이션이 있으면
 0–1 비율도 함께)를 초당 몇 번씩 찍습니다. 손가락을 하나씩 굽히면서 해당 숫자만 움직이는지 보세요.
@@ -265,9 +292,14 @@ python scripts/teleop.py sim --source realsense --scale 1.0 --depth-scale 1.0 \
   같은 세기의 주먹으로 `hand-calib`을 다시 실행하세요. WiLoR는 꽉 쥔 주먹의 curl을 과소추정하므로,
   닫힘 캡처는 해부학적 추정치가 아니라 WiLoR 자신의 추정값에서 나와야 합니다.
 - **`no glove data on udp :7012 after 5s`** — Axis Studio가 이 PC에 닿지 않고 있습니다. BVH
-  Broadcasting이 켜져 있고 *Destination*이 이 PC의 LAN 주소와 포트 `7012`(루프백 아님)인지, 케이블
-  링크가 살아 있는지(양방향 `ping`), 윈도우 방화벽이 송신을 막고 있지 않은지 확인하세요.
-  `--glove-port`는 Destination 포트와 일치해야 합니다.
+  Broadcasting이 켜져 있고 *Destination*이 **이** PC의 주소와 포트 `7012`(루프백 아님, 노트북 자기
+  주소도 아님)인지, 윈도우에서 `ping`이 되는지, 윈도우 방화벽이 송신을 막고 있지 않은지 확인하세요.
+  `--glove-port`는 Destination 포트와 일치해야 하고, 텔레옵은 *Destination*에 적은 그 머신에서
+  돌아야 합니다.
+- **`ping`은 되는데 `tcpdump`에 UDP가 안 찍힘** — ICMP는 통과시키고 스트림은 버리는 구간이 있습니다.
+  가능성 순서대로: 윈도우 방화벽(Axis Studio 아웃바운드를 개인 네트워크에서 허용), 이쪽 `ufw`
+  (`sudo ufw allow from <윈도우 서브넷> to any port 7012 proto udp`), 그다음 두 서브넷 사이 공유기
+  정책 — 마지막 경우는 랜선 직결(§2.1 a)로 아예 우회됩니다.
 - **장갑은 연결되는데 본이 안 옴** — 반대쪽 손이 스트리밍되고 있거나, Axis Studio가 손/장갑 워킹
   모드가 아닙니다. `--glove-hand left|right`를 주세요. `glove-test`가 시작 시 스트림에서 빠진 본을
   나열합니다.
