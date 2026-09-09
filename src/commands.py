@@ -112,23 +112,29 @@ def cmd_sim(args) -> int:
         record = str(paths.OUTPUT_DIR / f"{_source_stem(source)}_sim.mp4")
 
     dex_hand, dex_retarget = _build_dex_hand(args)
-    run_sim(
-        source=source,
-        record=record,
-        dex_hand=dex_hand,
-        dex_retarget=dex_retarget,
-        display=args.display,
-        max_frames=args.max_frames,
-        scale=args.scale,
-        depth_scale=args.depth_scale,
-        pos_only=args.pos_only,
-        primary=args.primary,
-        min_cutoff=args.min_cutoff,
-        beta=args.beta,
-        proc_max_side=(args.proc_max_side or None),
-        device=args.device,
-        dtype=args.dtype,
-    )
+    pose_source = _build_pose_source(args)
+    try:
+        run_sim(
+            source=source,
+            record=record,
+            dex_hand=dex_hand,
+            dex_retarget=dex_retarget,
+            pose_source=pose_source,
+            display=args.display,
+            max_frames=args.max_frames,
+            scale=args.scale,
+            depth_scale=args.depth_scale,
+            pos_only=args.pos_only,
+            primary=args.primary,
+            min_cutoff=args.min_cutoff,
+            beta=args.beta,
+            proc_max_side=(args.proc_max_side or None),
+            device=args.device,
+            dtype=args.dtype,
+        )
+    finally:
+        if pose_source is not None:
+            pose_source.close()
     return 0
 
 
@@ -165,15 +171,68 @@ def cmd_teleop(args) -> int:
     retarget = Retargeter(scale=args.scale, depth_scale=args.depth_scale, pos_only=args.pos_only)
     safety = SafetyLimiter(max_step_m=args.max_step_m)
     dex_hand, dex_retarget = _build_dex_hand(args)
-    run_teleop(
-        backend=backend, source=source, retarget=retarget, safety=safety,
-        dex_hand=dex_hand, dex_retarget=dex_retarget, record=record,
-        display=args.display, max_frames=args.max_frames, primary=args.primary,
-        min_cutoff=args.min_cutoff,
-        beta=args.beta, proc_max_side=(args.proc_max_side or None),
-        device=args.device, dtype=args.dtype,
-    )
+    pose_source = _build_pose_source(args)
+    try:
+        run_teleop(
+            backend=backend, source=source, retarget=retarget, safety=safety,
+            dex_hand=dex_hand, dex_retarget=dex_retarget, pose_source=pose_source, record=record,
+            display=args.display, max_frames=args.max_frames, primary=args.primary,
+            min_cutoff=args.min_cutoff,
+            beta=args.beta, proc_max_side=(args.proc_max_side or None),
+            device=args.device, dtype=args.dtype,
+        )
+    finally:
+        if pose_source is not None:
+            pose_source.close()
     return 0
+
+
+def _pose_source_name(args) -> str:
+    """Which sensor supplies the hand pose: 'wilor' (method 1) or 'glove' (method 2)."""
+    return str(getattr(args, "pose_source", "wilor") or "wilor").lower()
+
+
+def _glove_side(args) -> str:
+    """Glove hand to read: --glove-hand, else the controlling hand from --primary."""
+    side = getattr(args, "glove_hand", None)
+    if side:
+        return str(side).lower()
+    primary = str(getattr(args, "primary", "right") or "right").lower()
+    return primary if primary in ("left", "right") else "right"
+
+
+def _connect_glove(args, sides=None):
+    """Open the glove receiver and refuse to continue until a frame actually arrives.
+
+    Starting blind would look exactly like a hand that never moves: the fingers would sit at
+    their last pose with nothing in the logs pointing at the LAN link.
+    """
+    from .glove import GloveClient
+
+    side = _glove_side(args)
+    client = GloveClient(sides=sides or (side,), port=args.glove_port,
+                         host=getattr(args, "glove_host", None))
+    client.connect()
+    try:
+        client.require_data(timeout=args.glove_wait)
+    except Exception:
+        client.close()
+        raise
+    return client
+
+
+def _build_pose_source(args):
+    """Build the glove pose source for method 2, or None to keep WiLoR's pose (method 1)."""
+    if _pose_source_name(args) != "glove":
+        return None
+    from .glove import GloveHandSource
+
+    side = _glove_side(args)
+    client = _connect_glove(args)
+    logger.info("pose source: mocap glove (%s hand) on %s; the camera still supplies the wrist "
+                "position", side, client.where())
+    return GloveHandSource(client, side=side, timeout=args.glove_timeout,
+                           align_frames=args.glove_align_frames)
 
 
 def _build_dex_hand(args):
@@ -189,7 +248,8 @@ def _build_dex_hand(args):
         logger.info("dex hand calibration disabled: using the built-in defaults")
         calib_path = Path("none")
     else:
-        calib_path = Path(args.hand_calib) if args.hand_calib else paths.HAND_CALIB
+        calib_path = (Path(args.hand_calib) if args.hand_calib
+                      else paths.calib_path(_pose_source_name(args)))
     if calib_path.exists():
         from .retarget.dex_hand import DOF_NAMES as _DEX_NAMES
 
@@ -255,42 +315,78 @@ def cmd_hand_test(args) -> int:
     return 0
 
 
+_CALIB_POSES = {
+    "open": "hold your hand FULLY OPEN, fingers straight, thumb out",
+    "closed": "make a TIGHT FIST with the thumb across the palm",
+}
+
+
 def cmd_hand_calib(args) -> int:
-    """Record this operator's open-hand and fist finger angles into a calibration JSON."""
+    """Record this operator's open-hand and fist finger angles into a calibration JSON.
+
+    Each pose source gets its own file: WiLoR and the glove measure the same hand differently,
+    so a calibration captured through one saturates every DOF when applied to the other.
+    """
+    paths.ensure_workspace()
+    out_path = Path(args.out) if args.out else paths.calib_path(_pose_source_name(args))
+    if _pose_source_name(args) == "glove":
+        return _hand_calib_glove(args, out_path)
+    return _hand_calib_camera(args, out_path)
+
+
+def _countdown(seconds: int, tick=None) -> None:
+    """Log a per-second countdown, calling ``tick`` (e.g. to drain a camera) while waiting."""
     import time as _time
 
+    for sec in range(seconds, 0, -1):
+        logger.info("  capturing in %d ...", sec)
+        t_end = _time.perf_counter() + 1.0
+        while _time.perf_counter() < t_end:
+            if tick is not None:
+                tick()
+            else:
+                _time.sleep(0.01)
+
+
+def _save_calib(captured: dict, out_path: Path) -> int:
+    from .retarget import DexCalibration
+    from .retarget.dex_hand import DOF_NAMES
+
+    calib = DexCalibration(captured["open"], captured["closed"])
+    for name, span in zip(DOF_NAMES, calib.closed_rad - calib.open_rad):
+        if abs(span) < 0.15:
+            logger.warning("DOF %s has a tiny open/closed span (%.2f rad) - recapture it", name, span)
+    calib.save(out_path)
+    logger.info("calibration saved: %s", out_path)
+    return 0
+
+
+def _hand_calib_camera(args, out_path: Path) -> int:
+    """Capture the calibration poses through the camera (method 1: WiLoR angles)."""
     import numpy as np
 
     from .camera import open_source
     from .perception.realtime import HandTracker
     from .perception.wilor_estimator import WiLoREstimator
-    from .retarget import DexCalibration, DexHandRetargeter
+    from .retarget import DexHandRetargeter
     from .retarget.dex_hand import DOF_NAMES
 
-    paths.ensure_workspace()
     source = _resolve_source(args.source)
     if source is None:
         logger.error("no --source given and no bundled sample found; pass --source realsense|0|<video>")
         return 1
-    out_path = Path(args.out) if args.out else paths.HAND_CALIB
 
     est = WiLoREstimator(device=args.device, dtype=args.dtype, proc_max_side=args.proc_max_side or None,
                          primary=args.primary)
     tracker = HandTracker(est)
     retarget = DexHandRetargeter()
-    poses = {"open": "hold your hand FULLY OPEN, fingers straight, thumb out",
-             "closed": "make a TIGHT FIST with the thumb across the palm"}
     captured: dict[str, np.ndarray] = {}
 
     with open_source(source) as cam:
         frames = cam.frames()
-        for key, prompt in poses.items():
+        for key, prompt in _CALIB_POSES.items():
             logger.info("=== %s pose: %s ===", key.upper(), prompt)
-            for sec in range(args.countdown, 0, -1):
-                logger.info("  capturing in %d ...", sec)
-                t_end = _time.perf_counter() + 1.0
-                while _time.perf_counter() < t_end:
-                    next(frames, None)
+            _countdown(args.countdown, tick=lambda: next(frames, None))
             samples = []
             while len(samples) < args.frames:
                 frame = next(frames, None)
@@ -303,12 +399,95 @@ def cmd_hand_calib(args) -> int:
             captured[key] = np.median(np.stack(samples), axis=0)
             logger.info("  %s: %s", key,
                         ", ".join(f"{n}={v:+.2f}" for n, v in zip(DOF_NAMES, captured[key])))
+    return _save_calib(captured, out_path)
 
-    calib = DexCalibration(captured["open"], captured["closed"])
-    span = calib.closed_rad - calib.open_rad
-    for name, s in zip(DOF_NAMES, span):
-        if abs(s) < 0.15:
-            logger.warning("DOF %s has a tiny open/closed span (%.2f rad) - recapture it", name, s)
-    calib.save(out_path)
-    logger.info("calibration saved: %s", out_path)
+
+def _hand_calib_glove(args, out_path: Path) -> int:
+    """Capture the calibration poses through the glove (method 2: no camera needed).
+
+    Only joint angles are recorded, and the glove supplies those on its own -- so this runs
+    without the camera, the arm, or the hand attached.
+    """
+    import time as _time
+
+    import numpy as np
+
+    from .glove import GloveHandSource
+    from .retarget import DexHandRetargeter
+    from .retarget.dex_hand import DOF_NAMES
+
+    client = _connect_glove(args)
+    source = GloveHandSource(client, side=_glove_side(args), timeout=args.glove_timeout)
+    retarget = DexHandRetargeter()
+    captured: dict[str, np.ndarray] = {}
+    try:
+        for key, prompt in _CALIB_POSES.items():
+            logger.info("=== %s pose: %s ===", key.upper(), prompt)
+            _countdown(args.countdown)
+            samples = []
+            deadline = _time.perf_counter() + 10.0
+            while len(samples) < args.frames:
+                if _time.perf_counter() > deadline:
+                    logger.error("glove stopped sending during calibration (%d/%d samples)",
+                                 len(samples), args.frames)
+                    return 1
+                obs = source.observation()
+                if obs is not None:
+                    samples.append(retarget.raw(obs))
+                _time.sleep(1.0 / 60.0)  # the glove streams ~60 Hz; do not resample one frame
+            captured[key] = np.median(np.stack(samples), axis=0)
+            logger.info("  %s: %s", key,
+                        ", ".join(f"{n}={v:+.2f}" for n, v in zip(DOF_NAMES, captured[key])))
+    finally:
+        source.close()
+    return _save_calib(captured, out_path)
+
+
+def cmd_glove_test(args) -> int:
+    """Bring-up check for the glove link: stream live finger angles from the LAN connection.
+
+    The glove equivalent of ``hand-test``: it proves the Windows -> Ubuntu path and the bone
+    names before a camera, an arm or the RH56 are in the picture.
+    """
+    import time as _time
+
+    import numpy as np
+
+    from .glove import GloveHandSource
+    from .retarget import DexCalibration, DexHandRetargeter
+    from .retarget.dex_hand import DOF_NAMES
+    from .glove.skeleton import SIDE_PREFIX, hand_bones
+
+    client = _connect_glove(args)
+    side = _glove_side(args)
+    source = GloveHandSource(client, side=side, timeout=args.glove_timeout)
+    calib_file = Path(args.hand_calib) if getattr(args, "hand_calib", None) else paths.GLOVE_CALIB
+    calib = DexCalibration.load(calib_file) if calib_file.exists() else None
+    logger.info("finger calibration: %s", calib_file if calib else "none (raw angles only)")
+    retarget = DexHandRetargeter(calib=calib)
+
+    frame = client.latest(side)
+    missing = [b for b in hand_bones(SIDE_PREFIX[side]) if b not in frame.rotations]
+    if missing:
+        logger.warning("%d bone(s) absent from the stream (treated as unrotated): %s",
+                       len(missing), ", ".join(missing))
+    try:
+        t_end = _time.perf_counter() + args.duration
+        while _time.perf_counter() < t_end:
+            obs = source.observation()
+            if obs is None:
+                logger.warning("no fresh glove frame (%.0f Hz seen so far)", client.hz)
+            else:
+                raw = retarget.raw(obs)
+                ratio = retarget.calib.ratio(raw)
+                logger.info("%.0fHz | %s", client.hz, "  ".join(
+                    f"{n}={r:+.2f}rad/{c:.2f}" for n, r, c in zip(DOF_NAMES, raw, ratio)))
+            _time.sleep(args.interval)
+    except KeyboardInterrupt:
+        logger.info("interrupted")
+    finally:
+        source.close()
+    logger.info("glove check done: %d frames received at ~%.0f Hz. The rad values are raw joint "
+                "angles, the second number the calibrated 0-1 closed ratio sent to the hand.",
+                client.frames_received, client.hz)
     return 0

@@ -5,6 +5,7 @@ from typing import Optional
 
 from ..control.end_effector import EndEffector
 from ..control.safety import SafetyLimiter
+from ..perception.realtime import HandPoseSource
 from ..loop import run_teleop
 from ..retarget import DexHandRetargeter, Retargeter
 from .mujoco_env import XArm7Sim
@@ -15,6 +16,7 @@ def run_sim(
     record: Optional[str] = None,
     dex_hand: Optional[EndEffector] = None,
     dex_retarget: Optional[DexHandRetargeter] = None,
+    pose_source: Optional[HandPoseSource] = None,
     display: bool = False,
     max_frames: Optional[int] = None,
     scale: float = 3.0,
@@ -36,6 +38,7 @@ def run_sim(
         safety=SafetyLimiter(),
         dex_hand=dex_hand,
         dex_retarget=dex_retarget,
+        pose_source=pose_source,
         record=record,
         display=display,
         max_frames=max_frames,

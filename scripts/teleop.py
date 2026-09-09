@@ -39,6 +39,31 @@ def _add_hand_flags(p: argparse.ArgumentParser) -> None:
                    help="build hand frames without opening the port (no finger motion)")
 
 
+def _add_glove_flags(p: argparse.ArgumentParser, with_pose_source: bool = True) -> None:
+    """Flags for the mocap glove link (teleop method 2: camera position + glove hand pose)."""
+    from src.glove import DEFAULT_UDP_PORT
+
+    if with_pose_source:
+        p.add_argument("--pose-source", default="wilor", choices=["wilor", "glove"],
+                       help="where the hand POSE comes from: 'wilor' (camera, method 1) or "
+                            "'glove' (Noitom mocap glove, method 2). The wrist POSITION always "
+                            "comes from the camera")
+    p.add_argument("--glove-port", type=int, default=DEFAULT_UDP_PORT,
+                   help=f"UDP port Axis Studio broadcasts to (default {DEFAULT_UDP_PORT}); "
+                        "must match its BVH Broadcasting Destination port")
+    p.add_argument("--glove-host", default=None,
+                   help="connect to Axis Studio over TCP at this address instead of listening on UDP")
+    p.add_argument("--glove-hand", default=None, choices=["left", "right"],
+                   help="which gloved hand to read (default: follow --primary)")
+    p.add_argument("--glove-wait", type=float, default=5.0,
+                   help="seconds to wait for the first glove frame before giving up (default 5)")
+    p.add_argument("--glove-timeout", type=float, default=0.3,
+                   help="treat the glove as lost after this many seconds without a frame (default 0.3)")
+    p.add_argument("--glove-align-frames", type=int, default=30,
+                   help="frames used to estimate the glove->camera rotation after each "
+                        "re-acquisition (default 30)")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="teleop", description="xArm7 hand teleoperation")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -83,6 +108,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--device", default=None, help="cuda|cpu (default: auto)")
     p.add_argument("--dtype", default="float16", help="model dtype (float16|float32)")
     _add_hand_flags(p)
+    _add_glove_flags(p)
     p.set_defaults(func=commands.cmd_sim)
 
     p = sub.add_parser("teleop", help="Phase 3: drive the real xArm7 (dry-run unless --execute)")
@@ -111,6 +137,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--device", default=None, help="cuda|cpu (default: auto)")
     p.add_argument("--dtype", default="float16", help="model dtype (float16|float32)")
     _add_hand_flags(p)
+    _add_glove_flags(p)
     p.set_defaults(func=commands.cmd_teleop)
 
     p = sub.add_parser("hand-test", help="Bring-up: sweep each DOF of the Inspire RH56 hand")
@@ -131,15 +158,28 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("hand-calib", help="Record open/fist finger angles for dex-hand retargeting")
     p.add_argument("--source", default=None,
-                   help="'realsense' (D435), a webcam index (0), or a video path (default: sample)")
-    p.add_argument("--out", default=None, help="output JSON (default: data/hand_calib.json)")
+                   help="'realsense' (D435), a webcam index (0), or a video path (default: sample); "
+                        "unused with --pose-source glove")
+    p.add_argument("--out", default=None,
+                   help="output JSON (default: data/hand_calib.json, or data/glove_hand_calib.json "
+                        "with --pose-source glove)")
     p.add_argument("--frames", type=int, default=30, help="frames to average per pose")
     p.add_argument("--countdown", type=int, default=3, help="seconds of countdown before each pose")
     p.add_argument("--primary", default="right", choices=["auto", "left", "right"], help="controlling hand")
     p.add_argument("--proc-max-side", type=int, default=640, help="downscale longest side before inference (0=off)")
     p.add_argument("--device", default=None, help="cuda|cpu (default: auto)")
     p.add_argument("--dtype", default="float16", help="model dtype (float16|float32)")
+    _add_glove_flags(p)
     p.set_defaults(func=commands.cmd_hand_calib)
+
+    p = sub.add_parser("glove-test", help="Bring-up: stream live finger angles from the mocap glove")
+    p.add_argument("--duration", type=float, default=30.0, help="seconds to stream (default 30)")
+    p.add_argument("--interval", type=float, default=0.5, help="seconds between log lines (default 0.5)")
+    p.add_argument("--hand-calib", default=None,
+                   help="finger calibration JSON to show ratios against "
+                        "(default: data/glove_hand_calib.json if present)")
+    _add_glove_flags(p, with_pose_source=False)
+    p.set_defaults(func=commands.cmd_glove_test)
 
     return parser
 

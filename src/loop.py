@@ -21,7 +21,7 @@ from .control.end_effector import EndEffector
 from .control.safety import SafetyLimiter
 from .display import PreviewWindow
 from .log import get_logger
-from .perception.realtime import HandTracker
+from .perception.realtime import HandPoseSource, HandTracker
 from .perception.vis import draw_dof_bars, draw_hud, draw_hands, highlight_hand
 from .perception.wilor_estimator import WiLoREstimator
 from .retarget import DexHandRetargeter, Retargeter, pinch_to_closed
@@ -53,6 +53,7 @@ def run_teleop(
     safety: Optional[SafetyLimiter] = None,
     dex_hand: Optional[EndEffector] = None,
     dex_retarget: Optional[DexHandRetargeter] = None,
+    pose_source: Optional[HandPoseSource] = None,
     record: Optional[str] = None,
     display: bool = False,
     max_frames: Optional[int] = None,
@@ -64,7 +65,7 @@ def run_teleop(
     dtype: str = "float16",
 ) -> dict:
     est = WiLoREstimator(device=device, dtype=dtype, proc_max_side=proc_max_side, primary=primary)
-    tracker = HandTracker(est, min_cutoff=min_cutoff, beta=beta)
+    tracker = HandTracker(est, min_cutoff=min_cutoff, beta=beta, pose_source=pose_source)
     retarget = retarget or Retargeter()
     safety = safety or SafetyLimiter()
 
@@ -138,7 +139,8 @@ def run_teleop(
                 # left: camera overlay
                 cam_vis = draw_hands(frame.color, hands)
                 hud = [f"frame {frame.index}  {'ENGAGED' if retarget.engaged else 'idle'}"
-                       + ("  ESTOP" if safety.estopped else "")]
+                       + ("  ESTOP" if safety.estopped else "")
+                       + ("  pose:glove" if pose_source is not None else "")]
                 if prim is not None:
                     highlight_hand(cam_vis, prim)
                     if dex_hand is None:  # the pinch scalar only drives the 2-finger gripper
@@ -198,11 +200,16 @@ def run_teleop(
             unreached = [DEX_DOF_NAMES[i] for i in range(len(DEX_DOF_NAMES))
                          if float(dex_hi[i]) < 0.95]
             if unreached:
+                # name the pose source: each one has its own calibration file, and re-capturing
+                # the wrong one leaves the fingers exactly as short as they are now
+                glove = pose_source is not None
                 logger.warning(
                     "full close never commanded for %s (max ratio < 0.95). If you made a full "
-                    "fist during this run, the calibrated closed angle is beyond what WiLoR "
-                    "reports for your fist -- re-run 'teleop.py hand-calib' squeezing the same "
-                    "fist you use in teleop.", ", ".join(unreached))
+                    "fist during this run, the calibrated closed angle is beyond what the %s "
+                    "reports for your fist -- re-run 'teleop.py hand-calib%s' squeezing the same "
+                    "fist you use in teleop.", ", ".join(unreached),
+                    "glove" if glove else "camera",
+                    " --pose-source glove" if glove else "")
 
     stats = {
         "frames": n_frames,

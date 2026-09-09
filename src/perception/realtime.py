@@ -9,7 +9,7 @@ import statistics
 import time
 from collections import deque
 from dataclasses import replace
-from typing import Optional
+from typing import Optional, Protocol, runtime_checkable
 
 import numpy as np
 
@@ -25,11 +25,25 @@ from .wilor_estimator import WiLoREstimator
 logger = get_logger(__name__)
 
 
+@runtime_checkable
+class HandPoseSource(Protocol):
+    """A sensor that supplies the hand *pose* while the camera keeps supplying its position.
+
+    Implemented by ``glove.GloveHandSource`` (teleop method 2). ``fuse`` returns None when the
+    sensor has nothing fresh, which the tracker reports as an untracked frame.
+    """
+
+    def fuse(self, cam, t: float, image_shape=None): ...
+
+    def reset(self) -> None: ...
+
+
 class HandTracker:
     """Smooths the single controlling hand's wrist position + pinch across frames.
 
     Hand selection happens inside the estimator (single-hand inference), so ``update`` just
-    consumes the 0-or-1 hand it returns.
+    consumes the 0-or-1 hand it returns. With a ``pose_source``, the camera hand keeps only its
+    position and the pose (fingers, wrist rotation) comes from that sensor instead.
     """
 
     def __init__(
@@ -37,10 +51,12 @@ class HandTracker:
         estimator: WiLoREstimator,
         min_cutoff: float = 1.0,
         beta: float = 0.02,
+        pose_source: Optional[HandPoseSource] = None,
     ) -> None:
         self.est = estimator
         self.min_cutoff = min_cutoff
         self.beta = beta
+        self.pose_source = pose_source
         self._pos: Optional[OneEuroFilter] = None
         self._pinch: Optional[OneEuroFilter] = None
         self._reset()
@@ -48,6 +64,10 @@ class HandTracker:
     def _reset(self) -> None:
         self._pos = OneEuroFilter(self.min_cutoff, self.beta)
         self._pinch = OneEuroFilter(self.min_cutoff, self.beta)
+        if self.pose_source is not None:
+            # losing the hand is the operator re-indexing, which is also when the glove gets
+            # its chance to re-align against the camera
+            self.pose_source.reset()
 
     def update(self, color_bgr: np.ndarray, t: float, depth=None, intrinsics=None):
         """Return (hands, filtered_hand_or_None). Filter resets when the hand is lost.
@@ -62,6 +82,12 @@ class HandTracker:
         sel = hands[0]
         if depth is not None and intrinsics is not None:
             sel = refine_wrist(sel, depth, intrinsics)
+        if self.pose_source is not None:
+            fused = self.pose_source.fuse(sel, t, color_bgr.shape)
+            if fused is None:  # pose sensor stale: report untracked, keep the camera overlay
+                return hands, None
+            sel = fused
+            hands = [sel]
         pos = self._pos(sel.wrist_pos_cam, t)
         pinch = float(self._pinch(np.array([sel.pinch_dist]), t)[0])
         return hands, replace(sel, wrist_pos_cam=pos, pinch_dist=pinch)
