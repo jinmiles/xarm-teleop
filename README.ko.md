@@ -186,8 +186,11 @@ python scripts/teleop.py glove-test              # 파이프라인이 읽는지;
 반대 손에 장갑을 꼈다면 `--glove-hand left`, Destination 포트를 바꿨다면 `--glove-port <n>`을
 붙입니다.
 
-수신부는 `mocap_ros_py`의 Noitom MocapApi 래퍼를 `/home/user/extra_workdir/mocap_ros_py`에서 그대로
-가져다 씁니다(`src/paths.py` 참고). 양쪽 어디에도 ROS는 쓰이지 않습니다.
+수신부는 Noitom MocapApi를 직접 호출합니다. 라이브러리는 `vendor/noitom/`에 함께 들어 있고
+`src/glove/mocapapi.py`가 그 바인딩이라, 텔레옵 머신에는 이 repo를 clone하는 것 외에 필요한 게
+없습니다 — 외부 체크아웃도, 양쪽 어디에도 ROS도 필요 없습니다. 다른 위치의 라이브러리를 쓰려면
+`XARM_TELEOP_MOCAPAPI`를 지정하고, x86이 아닌 머신이면 해당 아키텍처의 `.so`를 같은 폴더에 넣으면
+됩니다(`vendor/noitom/NOTICE.md` 참고).
 
 ## 3. 캘리브레이션
 

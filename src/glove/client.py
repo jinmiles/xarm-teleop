@@ -1,9 +1,10 @@
 """Receiver for the Noitom mocap glove stream (Axis Studio -> this PC over the LAN).
 
 Axis Studio runs on the Windows laptop the glove hub is paired with and broadcasts BVH over the
-ethernet link; this client is the UDP/TCP peer on the Ubuntu side. It wraps MocapApi through the
-external ``mocap_ros_py`` wrapper (see ``paths.import_mocap_api``) and keeps only what the teleop
-loop needs: the latest per-bone local rotation and bone translation of one or both hands.
+network; this client is the UDP/TCP peer on the Linux side. It drives Noitom's MocapApi through
+``glove/mocapapi.py`` (the library itself is vendored in ``vendor/noitom/``, so no external
+checkout is involved) and keeps only what the teleop loop needs: the latest per-bone local
+rotation and bone translation of one or both hands.
 
 The stream is drained by a background thread so the vision loop never blocks on it and always
 reads the freshest frame: the glove runs faster than the camera pipeline, so polling in step with
@@ -18,8 +19,8 @@ from typing import Iterable, Optional
 
 import numpy as np
 
-from .. import paths
 from ..log import get_logger
+from .mocapapi import EVENT_AVATAR_UPDATED, Application, Avatar, MocapApiError, Settings
 from .skeleton import SIDE_PREFIX, hand_bones, quat_to_matrix, wrist_bone
 
 logger = get_logger(__name__)
@@ -60,9 +61,7 @@ class GloveClient:
                            for bone in hand_bones(SIDE_PREFIX[side])}
         self._wrist = {wrist_bone(SIDE_PREFIX[side]): side for side in self.sides}
 
-        self._app = None
-        self._api = None
-        self._settings = None
+        self._app: Optional[Application] = None
         self._lock = threading.Lock()
         self._frames: dict[str, GloveFrame] = {}
         self._thread: Optional[threading.Thread] = None
@@ -73,20 +72,19 @@ class GloveClient:
 
     # --- lifecycle ---------------------------------------------------------------------
     def connect(self) -> None:
-        api = paths.import_mocap_api()
-        self._api = api
-        settings = api.MCPSettings()
+        settings = Settings()
         if self.host:
             settings.set_tcp(self.host, self.port)
         else:
             settings.set_udp(self.port)
-        settings.set_bvh_rotation(0)
-        app = api.MCPApplication()
+        settings.set_bvh_rotation()
+        app = Application()
         app.set_settings(settings)
-        ok, msg = app.open()
-        if not ok:
-            raise RuntimeError(f"cannot open the glove receiver ({self.where()}): {msg}")
-        self._settings = settings   # MCPSettings destroys its handle when garbage collected
+        try:
+            app.open()
+        except MocapApiError as exc:  # e.g. AddressInUse: another receiver holds the port
+            app.close()
+            raise RuntimeError(f"cannot open the glove receiver ({self.where()}): {exc}") from exc
         self._app = app
         self._stop.clear()
         self._thread = threading.Thread(target=self._run, name="glove-rx", daemon=True)
@@ -173,15 +171,15 @@ class GloveClient:
     def _newest_avatar(self):
         """Drain queued events and return the most recent avatar update, if any."""
         handle = None
-        for evt in self._app.poll_next_event():
-            if evt.event_type == self._api.MCPEventType.AvatarUpdated:
+        for evt in self._app.poll_events():
+            if evt.event_type == EVENT_AVATAR_UPDATED:
                 handle = evt.event_data.avatar_handle
-        return None if handle is None else self._api.MCPAvatar(handle)
+        return None if handle is None else Avatar(handle)
 
     def _store(self, avatar) -> None:
         now = time.perf_counter()
         frames = {side: GloveFrame(t=now) for side in self.sides}
-        self._walk(avatar.get_root_joint(), np.eye(3), frames)
+        self._walk(avatar.root_joint(), np.eye(3), frames)
         complete = [side for side, f in frames.items() if f.rotations]
         if not complete:
             if not self._warned_bones:
@@ -198,17 +196,17 @@ class GloveClient:
 
     def _walk(self, joint, parent_rot: np.ndarray, frames: dict[str, GloveFrame]) -> None:
         """Depth-first over the avatar, accumulating global rotation down to the wrist bones."""
-        name = joint.get_name()
-        quat = np.asarray(joint.get_local_rotation(), dtype=float)   # (w, x, y, z)
+        name = joint.name()
+        quat = np.asarray(joint.local_rotation(), dtype=float)   # (w, x, y, z)
         rot = parent_rot @ quat_to_matrix(quat)
         side = self._bone_side.get(name)
         if side is not None:
             frame = frames[side]
             frame.rotations[name] = quat
-            offset = joint.get_local_position()
+            offset = joint.local_position()
             if offset is not None:
                 frame.offsets[name] = np.asarray(offset, dtype=float)
             if name in self._wrist:
                 frame.root_rot = rot
-        for child in joint.get_children():
+        for child in joint.children():
             self._walk(child, rot, frames)

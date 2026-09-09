@@ -195,8 +195,11 @@ once calibrated, the 0-1 ratios) a few times a second. Curl each finger in turn 
 number move. Add `--glove-hand left` if you glove the other hand, or `--glove-port <n>` if you
 changed the destination port.
 
-The receiver uses the Noitom MocapApi wrapper from `mocap_ros_py`, reused in place from
-`/home/user/extra_workdir/mocap_ros_py` (see `src/paths.py`); no ROS is involved on either side.
+The receiver drives Noitom's MocapApi directly: the library ships in `vendor/noitom/` and
+`src/glove/mocapapi.py` is the binding to it, so the teleop machine needs nothing beyond a clone
+of this repo — no external checkout, and no ROS on either side. `XARM_TELEOP_MOCAPAPI` points at
+a copy elsewhere; for a non-x86 machine, drop that architecture's `.so` in beside the vendored one
+(see `vendor/noitom/NOTICE.md`).
 
 ## 3. Calibration
 

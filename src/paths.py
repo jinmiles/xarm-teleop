@@ -20,6 +20,8 @@ GLOVE_CALIB = DATA_DIR / "glove_hand_calib.json"  # same, for glove-sourced fing
 OUTPUT_DIR = REPO_ROOT / "outputs"           # git-ignored local workspace (outputs)
 TESTS_DIR = REPO_ROOT / "tests"
 DOCS_DIR = REPO_ROOT / "docs"
+VENDOR_DIR = REPO_ROOT / "vendor"            # third-party binaries that must ship with the repo
+MOCAPAPI_DIR = VENDOR_DIR / "noitom"         # Noitom librobotapi (glove pose source)
 
 # --- external assets reused from other projects on this machine (do not copy/commit) -----
 EXTERNAL_ROOT = Path("/home/user/extra_workdir")
@@ -29,8 +31,6 @@ SAMPLE_IMAGES_DIR = (
     EXTERNAL_ROOT / "MV-SAM3D" / "submodules" / "Dyn-HaMR" / "third-party" / "hamer" / "example_data"
 )
 SAMPLE_VIDEO = EXTERNAL_ROOT / "HaWoR" / "example" / "video_0.mp4"  # dev-only default source
-# Noitom MocapApi python wrapper + librobotapi .so, reused in place (glove pose source).
-MOCAP_ROS_PY = EXTERNAL_ROOT / "mocap_ros_py"
 
 # Shared HuggingFace cache so wilor-mini weight downloads are centralized and reusable.
 HF_HOME = EXTERNAL_ROOT / "hf_cache"
@@ -55,33 +55,17 @@ def calib_path(pose_source: str) -> Path:
     return GLOVE_CALIB if pose_source == "glove" else HAND_CALIB
 
 
-def import_mocap_api():
-    """Import ``mocap_robotapi`` (Noitom MocapApi ctypes wrapper) from the external repo.
+def mocapapi_lib(filename: str) -> Path:
+    """Path to Noitom's MocapApi shared library.
 
-    Integration is sys.path injection only; the external repo is used as-is. Upstream's module
-    body carries an unused ``from docutils...`` import, so a stub module is registered when
-    docutils is absent rather than adding a dependency the wrapper never uses.
+    Vendored in the repo so a teleop machine needs no external checkout. ``XARM_TELEOP_MOCAPAPI``
+    overrides it with either a file or a directory holding one.
     """
-    import types
-
-    if not MOCAP_ROS_PY.exists():
-        raise FileNotFoundError(
-            f"mocap_ros_py not found at {MOCAP_ROS_PY}; it provides the Noitom MocapApi wrapper "
-            "and librobotapi .so used by the glove pose source"
-        )
-    try:
-        import docutils.parsers.rst.directives  # noqa: F401
-    except ImportError:
-        for name in ("docutils", "docutils.parsers", "docutils.parsers.rst",
-                     "docutils.parsers.rst.directives"):
-            module = sys.modules.setdefault(name, types.ModuleType(name))
-            if name.endswith("directives") and not hasattr(module, "encoding"):
-                module.encoding = "utf-8"
-    if str(MOCAP_ROS_PY) not in sys.path:
-        sys.path.insert(0, str(MOCAP_ROS_PY))
-    import mocap_robotapi  # noqa: E402  (path injection must happen first)
-
-    return mocap_robotapi
+    override = os.environ.get("XARM_TELEOP_MOCAPAPI")
+    if override:
+        path = Path(override)
+        return path / filename if path.is_dir() else path
+    return MOCAPAPI_DIR / filename
 
 
 def add_third_party(*names: str) -> None:
